@@ -363,9 +363,6 @@ impl ApiClient {
     }
 
     /// `POST /api/assets` — store one extracted image and get back its path (spec §5.4).
-    // Asset extraction is Task 17; the upload it needs lives here with the rest of the
-    // wire format rather than being bolted on later.
-    #[allow(dead_code)]
     pub async fn upload_asset(&self, bytes: &[u8], media_type: &str) -> Result<String> {
         let part = multipart::Part::bytes(bytes.to_vec())
             .file_name("asset")

@@ -1,10 +1,12 @@
 //! `artef push <file>` — create or update an artifact from a file (spec §5.2, §7.2).
 //!
-//! The order of the steps is the whole design. Lint first, so a document that would
-//! render broken never reaches the server (§7.1). Hash and compress next. Then `HEAD`,
-//! so an unchanged document costs one small round trip instead of an upload (§5.2
-//! hash-first push). Only then `PUT`, carrying the version we based the write on so a
-//! second pusher cannot silently overwrite us.
+//! The order of the steps is the whole design. Lint first, on the document as written,
+//! so one that would render broken never reaches the server (§7.1). Then pull the large
+//! inline images out (§6), because that is what decides the bytes everything downstream
+//! is about. Hash and compress those bytes. Then `HEAD`, so an unchanged document costs
+//! one small round trip instead of an upload (§5.2 hash-first push). Only then `PUT`,
+//! carrying the version we based the write on so a second pusher cannot silently
+//! overwrite us.
 
 use std::io::Write;
 use std::path::Path;
@@ -18,6 +20,7 @@ use crate::api::{self, ApiClient, PutOutcome};
 use crate::commands::lint::format_violation;
 use crate::commands::{state_key, track};
 use crate::config::GlobalConfig;
+use crate::extract::extract_assets;
 use crate::lint::{lint_html, Severity};
 use crate::state::State;
 
@@ -137,20 +140,42 @@ fn preflight(html: &str) -> Result<()> {
     Ok(())
 }
 
-/// Where spec §6 asset extraction will happen, between the lint and the upload.
+/// Spec §6 asset extraction, between the lint and the upload: pull the large inline
+/// `data:` images out of the document, `POST` them to `/api/assets`, and upload a
+/// document that points at `/assets/<sha>` instead.
 ///
-/// Task 17 fills this in: it will pull large inline `data:` images out of the document,
-/// `POST` them to `/api/assets`, and rewrite the attributes to `/assets/<sha>`. Until
-/// then the document is uploaded exactly as it was written.
+/// The images go up first, so the document is never live naming an asset the server
+/// does not have. An upload that fails stops the push for the same reason — half an
+/// extraction is a document with broken images in it.
 ///
-/// The daemon goes through here too, so filling it in fixes both paths at once.
+/// The rewritten paths are relative, which the artifact CSP allows, so the document
+/// stays lint-clean by construction and is not checked again.
+///
+/// The daemon goes through here too (spec §7.4), so both paths extract.
 pub(crate) async fn apply_asset_extraction(
     html: &str,
     api: &ApiClient,
     no_extract: bool,
 ) -> Result<String> {
-    let _ = (api, no_extract);
-    Ok(html.to_string())
+    if no_extract {
+        return Ok(html.to_string());
+    }
+
+    let (rewritten, assets) = extract_assets(html)?;
+    for asset in &assets {
+        let stored = api.upload_asset(&asset.bytes, &asset.media_type).await?;
+        // Content addressing is the whole contract here: the document already points at
+        // `/assets/<sha>`, so a server that filed the bytes under another name would
+        // leave a broken image behind. Say so rather than push one.
+        if !stored.ends_with(&asset.sha_hex) {
+            bail!(
+                "the server stored an asset at {stored}, but the document points at \
+                 /assets/{}",
+                asset.sha_hex
+            );
+        }
+    }
+    Ok(rewritten)
 }
 
 /// SHA-256 of the document as written, which is what the server compares against.
@@ -170,6 +195,8 @@ pub fn gzip(bytes: &[u8]) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use std::io::Read;
+
+    use base64::Engine;
 
     #[test]
     fn the_hash_is_of_the_document_not_the_compressed_bytes() {
@@ -203,15 +230,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_extraction_hook_leaves_the_document_alone_for_now() {
-        let api = ApiClient::new("http://localhost:8080", "art_live_x").unwrap();
-        let html = "<img src=\"data:image/png;base64,iVBORw0K\">";
+    async fn no_extract_touches_neither_the_document_nor_the_network() {
+        // A server that is not listening: an upload attempt would fail the call.
+        let api = ApiClient::new("http://127.0.0.1:1", "art_live_x").unwrap();
+        let big = base64::engine::general_purpose::STANDARD
+            .encode((0..20 * 1024).map(|i| (i % 251) as u8).collect::<Vec<u8>>());
+        let html = format!("<img src=\"data:image/png;base64,{big}\">");
+
         assert_eq!(
-            apply_asset_extraction(html, &api, false).await.unwrap(),
+            apply_asset_extraction(&html, &api, true).await.unwrap(),
             html
         );
+    }
+
+    #[tokio::test]
+    async fn a_document_with_nothing_to_extract_needs_no_uploads() {
+        let api = ApiClient::new("http://127.0.0.1:1", "art_live_x").unwrap();
+        let html = "<img src=\"data:image/png;base64,iVBORw0K\"><h1>small</h1>";
+
         assert_eq!(
-            apply_asset_extraction(html, &api, true).await.unwrap(),
+            apply_asset_extraction(html, &api, false).await.unwrap(),
             html
         );
     }

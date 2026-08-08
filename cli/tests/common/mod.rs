@@ -233,6 +233,10 @@ pub fn sha256_hex(text: &str) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))
 }
 
+pub fn sha256_hex_bytes(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
 pub fn gzip(text: &str) -> Vec<u8> {
     use flate2::write::GzEncoder;
     use std::io::Write;
@@ -293,6 +297,19 @@ pub async fn mock_create(server: &MockServer, id: &str) {
             "name": null,
             "visibility": "private",
             "version": 0,
+        })))
+        .mount(server)
+        .await;
+}
+
+/// `POST /api/assets` answering the way spec §5.4 says it does.
+pub async fn mock_asset(server: &MockServer, sha_hex: &str, byte_size: usize) {
+    Mock::given(method("POST"))
+        .and(path("/api/assets"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "sha256": sha_hex,
+            "url": format!("/assets/{sha_hex}"),
+            "byte_size": byte_size,
         })))
         .mount(server)
         .await;

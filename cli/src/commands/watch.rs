@@ -474,6 +474,7 @@ mod tests {
     use super::*;
     use std::io::Read;
 
+    use base64::Engine;
     use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -529,6 +530,16 @@ command = "./scripts/build_report.sh"
         Mock::given(method("POST"))
             .and(path("/api/artifacts"))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": ID })))
+            .mount(server)
+            .await;
+    }
+
+    async fn mock_asset(server: &MockServer, sha_hex: &str) {
+        Mock::given(method("POST"))
+            .and(path("/api/assets"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(
+                json!({ "sha256": sha_hex, "url": format!("/assets/{sha_hex}"), "byte_size": 0 }),
+            ))
             .mount(server)
             .await;
     }
@@ -692,6 +703,41 @@ command = "./scripts/build_report.sh"
         assert_eq!(
             state_of(dir.path(), "out.html")["hash"],
             sha256_hex(DOC.as_bytes())
+        );
+    }
+
+    /// Extraction is not a `push` feature bolted onto one command: a dashboard that
+    /// re-renders the same logo every minute is exactly what §6 is for, and the daemon
+    /// goes through the same hook.
+    #[tokio::test]
+    async fn a_tick_pulls_large_inline_images_out_the_way_a_push_does() {
+        let server = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let bytes: Vec<u8> = (0..20 * 1024).map(|i| (i % 251) as u8).collect();
+        let sha = sha256_hex(&bytes);
+        std::fs::write(
+            dir.path().join("out.html"),
+            format!(
+                r#"<img src="data:image/png;base64,{}">"#,
+                base64::engine::general_purpose::STANDARD.encode(&bytes)
+            ),
+        )
+        .unwrap();
+        already_tracked(dir.path(), "out.html");
+        mock_asset(&server, &sha).await;
+        mock_head_missing(&server).await;
+        mock_put(&server, 4).await;
+
+        let outcome = run_tick(&client(&server), dir.path(), &entry("out.html", None))
+            .await
+            .unwrap();
+
+        assert_eq!(outcome, TickOutcome::Pushed { version: 4 });
+        let pushed = gunzip(&only_request(&server, "PUT").await.body);
+        assert_eq!(pushed, format!(r#"<img src="/assets/{sha}">"#));
+        assert_eq!(
+            state_of(dir.path(), "out.html")["hash"],
+            sha256_hex(pushed.as_bytes())
         );
     }
 

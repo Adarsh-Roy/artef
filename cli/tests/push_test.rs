@@ -2,15 +2,30 @@
 
 mod common;
 
+use base64::Engine;
 use common::{
-    calls, gunzip, header, mock_create, mock_head, mock_head_missing, mock_put, mock_put_conflict,
-    only_request, sha256_hex, Cli, ID, TOKEN,
+    calls, gunzip, header, mock_asset, mock_create, mock_head, mock_head_missing, mock_put,
+    mock_put_conflict, only_request, sha256_hex, sha256_hex_bytes, Cli, ID, TOKEN,
 };
 use wiremock::MockServer;
 
 const DOC: &str = "<!doctype html><html><body><h1>Q3</h1></body></html>";
 const CDN_DOC: &str =
     r#"<html><body><script src="https://cdn.jsdelivr.net/npm/chart.js"></script></body></html>"#;
+
+/// Bytes that stand in for a chart PNG: big enough to be extracted (spec §6), and
+/// non-repeating so the hash is unmistakably theirs.
+fn chart_png() -> Vec<u8> {
+    (0..20 * 1024).map(|i| (i % 251) as u8).collect()
+}
+
+/// A report with that chart inlined the way an agent writes one.
+fn doc_with_chart(bytes: &[u8]) -> String {
+    format!(
+        r#"<!doctype html><html><body><h1>Q3</h1><img src="data:image/png;base64,{}"></body></html>"#,
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
 
 #[tokio::test]
 async fn a_first_push_creates_the_artifact_then_uploads_it_gzipped() {
@@ -310,6 +325,117 @@ async fn a_push_without_a_token_says_how_to_get_one() {
         run.stderr
     );
     assert_eq!(calls(&server).await, Vec::<(String, String)>::new());
+}
+
+#[tokio::test]
+async fn a_large_inline_image_is_uploaded_once_and_the_document_points_at_it() {
+    let server = MockServer::start().await;
+    let cli = Cli::new();
+    let bytes = chart_png();
+    let sha = sha256_hex_bytes(&bytes);
+    cli.write("report.html", &doc_with_chart(&bytes));
+    cli.write_state("report.html", ID, "");
+
+    mock_asset(&server, &sha, bytes.len()).await;
+    mock_head(&server, ID, &sha256_hex("<h1>old</h1>"), 1).await;
+    mock_put(&server, ID, 2).await;
+
+    let run = cli.run(&server, &["push", "report.html"]);
+
+    run.ok();
+
+    // The image goes up before the document that names it, so the document is never
+    // live pointing at an asset the server does not have yet.
+    assert_eq!(
+        calls(&server).await,
+        vec![
+            ("POST".to_string(), "/api/assets".to_string()),
+            ("HEAD".to_string(), format!("/api/artifacts/{ID}/content")),
+            ("PUT".to_string(), format!("/api/artifacts/{ID}/content")),
+        ]
+    );
+
+    // The upload carries the decoded bytes, not the base64 that was in the document.
+    let post = only_request(&server, "POST").await;
+    assert!(
+        post.body
+            .windows(bytes.len())
+            .any(|window| window == bytes.as_slice()),
+        "the multipart body did not contain the decoded image"
+    );
+
+    let pushed = gunzip(&only_request(&server, "PUT").await.body);
+    assert_eq!(
+        pushed,
+        format!(r#"<!doctype html><html><body><h1>Q3</h1><img src="/assets/{sha}"></body></html>"#)
+    );
+    assert!(!pushed.contains("base64"), "pushed:\n{pushed}");
+    // What was hashed and tracked is the document that was actually uploaded.
+    assert_eq!(
+        header(&only_request(&server, "PUT").await, "if-none-match").as_deref(),
+        Some(format!("\"{}\"", sha256_hex(&pushed)).as_str())
+    );
+    assert_eq!(
+        cli.state()["artifacts"]["report.html"]["hash"],
+        sha256_hex(&pushed)
+    );
+}
+
+#[tokio::test]
+async fn no_extract_uploads_the_document_with_its_images_still_inside() {
+    let server = MockServer::start().await;
+    let cli = Cli::new();
+    let doc = doc_with_chart(&chart_png());
+    cli.write("report.html", &doc);
+    cli.write_state("report.html", ID, "");
+
+    // No /api/assets mock: an upload attempt would 404 and fail the run.
+    mock_head(&server, ID, &sha256_hex("<h1>old</h1>"), 1).await;
+    mock_put(&server, ID, 2).await;
+
+    let run = cli.run(&server, &["push", "report.html", "--no-extract"]);
+
+    run.ok();
+    assert_eq!(
+        calls(&server).await,
+        vec![
+            ("HEAD".to_string(), format!("/api/artifacts/{ID}/content")),
+            ("PUT".to_string(), format!("/api/artifacts/{ID}/content")),
+        ]
+    );
+    assert_eq!(gunzip(&only_request(&server, "PUT").await.body), doc);
+}
+
+#[tokio::test]
+async fn an_asset_upload_that_fails_stops_the_push_with_the_servers_reason() {
+    let server = MockServer::start().await;
+    let cli = Cli::new();
+    cli.write("report.html", &doc_with_chart(&chart_png()));
+    cli.write_state("report.html", ID, "");
+
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/assets"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(413)
+                .set_body_json(serde_json::json!({ "error": "asset too large" })),
+        )
+        .mount(&server)
+        .await;
+
+    let run = cli.run(&server, &["push", "report.html"]);
+
+    run.failed();
+    assert!(
+        run.stderr.contains("413") && run.stderr.contains("asset too large"),
+        "stderr was:\n{}",
+        run.stderr
+    );
+    // Nothing was uploaded: a document naming an asset the server rejected would
+    // render with a broken image.
+    assert_eq!(
+        calls(&server).await,
+        vec![("POST".to_string(), "/api/assets".to_string())]
+    );
 }
 
 #[tokio::test]

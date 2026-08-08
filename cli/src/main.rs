@@ -1,6 +1,7 @@
 mod api;
 mod commands;
 mod config;
+mod extract;
 mod interval;
 mod lint;
 mod state;
