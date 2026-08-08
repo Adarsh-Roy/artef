@@ -94,9 +94,25 @@ export async function createNotifier(databaseUrl: string): Promise<Notifier> {
     connecting.on('notification', msg => dispatch(msg.payload))
 
     await connecting.connect()
-    // A constant, never interpolated from anything a caller supplied — a
-    // channel name is an identifier and cannot be a bound parameter.
-    await connecting.query(`LISTEN ${CHANNEL}`)
+    try {
+      // A constant, never interpolated from anything a caller supplied — a
+      // channel name is an identifier and cannot be a bound parameter.
+      await connecting.query(`LISTEN ${CHANNEL}`)
+    } catch (err) {
+      // Connected but not listening is no use to anyone, and nothing else holds
+      // a reference to it — without this the retry loop would leave a backend
+      // behind on every attempt.
+      await connecting.end().catch(() => {})
+      throw err
+    }
+
+    // `close()` can have run while this connection was being made: it ended the
+    // client it knew about, which was not this one. Left alone, this would go on
+    // listening for the life of the process.
+    if (closed) {
+      await connecting.end().catch(() => {})
+      return
+    }
 
     client = connecting
     retryMs = FIRST_RETRY_MS

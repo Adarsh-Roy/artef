@@ -378,6 +378,20 @@ describe('createNotifier', () => {
     await sleep(200)
     expect(seen).toEqual([])
   })
+
+  it('close() during an outage leaves no connection behind', async () => {
+    const notifier = await newNotifier()
+
+    // Killed, so a reconnection is pending, and closed before it can land.
+    await deps.pool.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+       WHERE datname = current_database() AND query LIKE 'LISTEN %' AND pid <> pg_backend_pid()`,
+    )
+    await notifier.close()
+
+    await sleep(1500)
+    expect(await listeningBackends(deps.pool)).toBe(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
