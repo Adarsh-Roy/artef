@@ -1,9 +1,14 @@
 //! CSP preflight lint (spec §7.1).
 //!
-//! Artifacts are served under `default-src 'none'; connect-src 'none';
-//! img-src 'self' data:`, so any HTML that reaches out to another origin renders
-//! visibly broken with no error the reader can interpret. This module finds those
-//! references before the document is uploaded.
+//! Artifacts are served under a sandbox CSP (`ARTIFACT_CSP` in
+//! `server/src/lib/headers.ts`). Two shapes of reference render broken with no
+//! error the reader can interpret. Most directives (`img-src`/`media-src`/
+//! `font-src 'self' data:`) allow the document's own origin, so only references
+//! that reach out to *another* origin fail. But `script-src`/`style-src` carry
+//! no `'self'` and no `data:`, and `base-uri`/`form-action` are `'none'`, so for
+//! those a local reference is as dead as an external one — a `<script src>`,
+//! stylesheet `<link>`, `<base href>` or `<form action>` of any value at all.
+//! This module finds both before the document is uploaded.
 
 use std::cell::RefCell;
 
@@ -30,6 +35,20 @@ pub struct Violation {
 /// What to tell the user about a subresource that has to come from the document itself.
 const INLINE_IT: &str = "inline it or vendor it manually";
 
+/// `script-src` carries no `'self'` and no `data:`, so a `src` of any kind — external,
+/// root-relative, relative, even `data:` — is blocked. Only inline `<script>` runs.
+const SCRIPT_BLOCKED: &str =
+    "external and local scripts are both blocked; inline the code in a <script> tag";
+
+/// `style-src` is `'unsafe-inline'` only, so a stylesheet `<link>` of any href is dead.
+const STYLESHEET_BLOCKED: &str = "inline the CSS in a <style> tag";
+
+/// `base-uri 'none'` makes `<base href>` inert — the browser silently ignores it.
+const BASE_IGNORED: &str = "base-uri 'none' ignores <base>; use absolute or /assets paths";
+
+/// `form-action 'none'` blocks every submission, same-origin or not.
+const FORM_BLOCKED: &str = "form submissions are blocked by form-action 'none'";
+
 /// JS network APIs that `connect-src 'none'` turns into no-ops.
 const BLOCKED_NETWORK_APIS: [&str; 4] = ["fetch(", "XMLHttpRequest", "EventSource", "WebSocket"];
 
@@ -41,16 +60,20 @@ pub fn lint_html(html: &str) -> Vec<Violation> {
 
     let settings = RewriteStrSettings {
         element_content_handlers: vec![
+            // `script-src`/`style-src` allow only inline code, so ANY src/href is
+            // blocked — not just external ones. Reject whatever value is present.
             element!("script[src]", |el| {
-                check_attr(&found, el, "src", Severity::Reject, INLINE_IT);
+                check_attr_present(&found, el, "src", Severity::Reject, SCRIPT_BLOCKED);
                 Ok(())
             }),
             element!("link[href]", |el| {
                 if is_stylesheet(el.get_attribute("rel").as_deref()) {
-                    check_attr(&found, el, "href", Severity::Reject, INLINE_IT);
+                    check_attr_present(&found, el, "href", Severity::Reject, STYLESHEET_BLOCKED);
                 }
                 Ok(())
             }),
+            // `img-src`/`media-src`/`font-src` all allow `'self'` and `data:`, so these
+            // stay external-only rejects.
             element!("img", |el| {
                 check_attr(&found, el, "src", Severity::Reject, INLINE_IT);
                 check_srcset(&found, el);
@@ -59,6 +82,20 @@ pub fn lint_html(html: &str) -> Vec<Violation> {
             element!("source", |el| {
                 check_attr(&found, el, "src", Severity::Reject, INLINE_IT);
                 check_srcset(&found, el);
+                Ok(())
+            }),
+            // A media element's own `src` (not just a nested `<source>`) is a
+            // subresource under `media-src`, blocked when it points off-origin.
+            element!("video", |el| {
+                check_attr(&found, el, "src", Severity::Reject, INLINE_IT);
+                Ok(())
+            }),
+            element!("audio", |el| {
+                check_attr(&found, el, "src", Severity::Reject, INLINE_IT);
+                Ok(())
+            }),
+            element!("track", |el| {
+                check_attr(&found, el, "src", Severity::Reject, INLINE_IT);
                 Ok(())
             }),
             element!("[poster]", |el| {
@@ -83,14 +120,14 @@ pub fn lint_html(html: &str) -> Vec<Violation> {
                 }
                 Ok(())
             }),
+            // Every submission is blocked, same-origin or not, so warn on ANY action.
             element!("form[action]", |el| {
-                check_attr(
-                    &found,
-                    el,
-                    "action",
-                    Severity::Warn,
-                    "form submissions are blocked by form-action 'none'",
-                );
+                check_attr_present(&found, el, "action", Severity::Warn, FORM_BLOCKED);
+                Ok(())
+            }),
+            // `<base href>` is inert under `base-uri 'none'` — a best-effort no-op.
+            element!("base[href]", |el| {
+                check_attr_present(&found, el, "href", Severity::Warn, BASE_IGNORED);
                 Ok(())
             }),
             text!("style", |chunk| {
@@ -203,6 +240,24 @@ fn check_attr(
         let what = format!("<{} {attr}> {url}", el.tag_name());
         record(found, severity, what, detail);
     }
+}
+
+/// Record the attribute whenever it is present, regardless of its value. For the
+/// directives that permit no source at all (`script-src`/`style-src` have no `'self'`
+/// or `data:`; `base-uri`/`form-action` are `'none'`), a local value is as blocked as
+/// an external one, so there is nothing to distinguish.
+fn check_attr_present(
+    found: &RefCell<Vec<Violation>>,
+    el: &Element<'_, '_>,
+    attr: &str,
+    severity: Severity,
+    detail: &str,
+) {
+    let Some(value) = el.get_attribute(attr) else {
+        return;
+    };
+    let what = format!("<{} {attr}> {}", el.tag_name(), value.trim());
+    record(found, severity, what, detail);
 }
 
 /// `srcset` holds comma-separated candidates, each a URL plus an optional descriptor.
@@ -506,14 +561,124 @@ mod tests {
                 expect: &[Warn],
             },
             Case {
-                name: "relative form action is fine",
+                // form-action 'none' blocks every submission, not just external
+                // ones, so even a same-origin action is a dead target.
+                name: "relative form action is warned, not clean",
                 html: r#"<form action="/submit"></form>"#,
+                expect: &[Warn],
+            },
+            Case {
+                // Nothing to submit anywhere, so nothing to warn about.
+                name: "a form with no action is fine",
+                html: r#"<form><input name="q"></form>"#,
                 expect: &[],
             },
             Case {
                 name: "rejects and warnings in one document, in document order",
                 html: r#"<script src="https://x/a.js"></script><form action="https://x"></form>"#,
                 expect: &[Reject, Warn],
+            },
+            // FINDING 1 — media-src 'self' data:, so a media element's own src to
+            // another origin renders broken just like <source src>.
+            Case {
+                name: "external video src",
+                html: r#"<video src="https://x/v.mp4"></video>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "external audio src",
+                html: r#"<audio src="https://x/a.mp3"></audio>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "external track src",
+                html: r#"<video><track src="https://x/s.vtt"></video>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "protocol-relative video src",
+                html: r#"<video src="//x/v.mp4"></video>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "local video src is fine (media-src allows 'self')",
+                html: r#"<video src="/assets/v.mp4"></video>"#,
+                expect: &[],
+            },
+            // FINDING 2 — script-src has no 'self'/data:, so ANY script src is dead,
+            // not only external ones. Same for a stylesheet <link href>.
+            Case {
+                name: "root-relative script src",
+                html: r#"<script src="/app.js"></script>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "relative script src",
+                html: r#"<script src="chart.js"></script>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "data: script src",
+                html: r#"<script src="data:text/javascript,alert(1)"></script>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "root-relative stylesheet href",
+                html: r#"<link rel="stylesheet" href="/x.css">"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "relative stylesheet href",
+                html: r#"<link rel="stylesheet" href="styles.css">"#,
+                expect: &[Reject],
+            },
+            // FINDING 4 — base-uri 'none' makes <base href> inert; warn, don't reject.
+            Case {
+                name: "root-relative base href",
+                html: r#"<base href="/">"#,
+                expect: &[Warn],
+            },
+            Case {
+                name: "external base href",
+                html: r#"<base href="https://x/">"#,
+                expect: &[Warn],
+            },
+            Case {
+                name: "base with no href is fine",
+                html: r#"<base target="_self">"#,
+                expect: &[],
+            },
+            // Finding 2's broad script/stylesheet reject must NOT leak into images,
+            // links, or inline code — those are all CSP-legal and stay clean.
+            Case {
+                name: "data: image stays clean",
+                html: r#"<img src="data:image/png;base64,iVBORw0K">"#,
+                expect: &[],
+            },
+            Case {
+                name: "/assets image path stays clean",
+                html: r#"<img src="/assets/abc123">"#,
+                expect: &[],
+            },
+            Case {
+                name: "relative image src stays clean",
+                html: r#"<img src="chart.png">"#,
+                expect: &[],
+            },
+            Case {
+                name: "inline script stays clean",
+                html: r#"<script>document.title = 'ok';</script>"#,
+                expect: &[],
+            },
+            Case {
+                name: "inline style stays clean",
+                html: r#"<style>body{color:red}</style>"#,
+                expect: &[],
+            },
+            Case {
+                name: "external anchor link stays clean",
+                html: r#"<a href="https://example.com/">out</a>"#,
+                expect: &[],
             },
             Case {
                 name: "clean document",
@@ -549,6 +714,35 @@ mod tests {
 
         let v = &lint_html(r#"<script>fetch('/a')</script>"#)[0];
         assert!(v.what.contains("fetch("), "what was {:?}", v.what);
+    }
+
+    #[test]
+    fn blocked_subresources_name_the_source_and_the_fix() {
+        // A local script src is dead under script-src, so the message must not
+        // suggest the file will load — it must say to inline the code.
+        let v = &lint_html(r#"<script src="/app.js"></script>"#)[0];
+        assert_eq!(v.severity, Reject);
+        assert!(v.what.contains("/app.js"), "what was {:?}", v.what);
+        assert!(
+            v.detail.contains("inline the code"),
+            "detail was {:?}",
+            v.detail
+        );
+
+        // A stylesheet <link> is equally dead under style-src.
+        let v = &lint_html(r#"<link rel="stylesheet" href="/x.css">"#)[0];
+        assert_eq!(v.severity, Reject);
+        assert!(v.what.contains("/x.css"), "what was {:?}", v.what);
+        assert!(
+            v.detail.contains("inline the CSS"),
+            "detail was {:?}",
+            v.detail
+        );
+
+        // <base href> is inert, not broken, so it warns and names base-uri.
+        let v = &lint_html(r#"<base href="/">"#)[0];
+        assert_eq!(v.severity, Warn);
+        assert!(v.detail.contains("base-uri"), "detail was {:?}", v.detail);
     }
 
     #[test]
