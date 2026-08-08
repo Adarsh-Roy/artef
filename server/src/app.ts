@@ -12,6 +12,7 @@ import { bearerMiddleware } from './auth/bearer.js'
 import { registerAuthRoutes } from './auth/oidc.js'
 import { originCheck } from './auth/origin.js'
 import { sessionMiddleware } from './auth/session.js'
+import { registerArtifactRoutes } from './routes/artifacts.js'
 import { registerTokenRoutes } from './routes/tokens.js'
 
 /** Live-update fan-out (spec §5.5). Optional until the SSE milestone builds it. */
@@ -52,8 +53,18 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   // yet — a state-changing request must never reach a handler unchecked.
   app.use('/api/*', originCheck(deps.cfg))
 
+  // Every error body on this API is `{ "error": ... }`, and an unexpected throw
+  // must not be the one exception — Hono's default 500 is plain text, which a
+  // client parsing JSON reports as a parse failure instead of a server error.
+  // The real error goes to the log; the caller gets nothing but the fact.
+  app.onError((err, c) => {
+    console.error(err)
+    return c.json({ error: 'internal error' }, 500)
+  })
+
   registerAuthRoutes(app, deps)
   registerTokenRoutes(app, deps)
+  registerArtifactRoutes(app, deps)
 
   // Spec §10: 200 exactly when the database is reachable.
   app.get('/_health', async c => {
