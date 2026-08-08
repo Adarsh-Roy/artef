@@ -41,14 +41,6 @@ export function registerEventRoutes(app: Hono<AppEnv>, deps: Deps): void {
     const keepaliveMs = deps.keepaliveMs ?? KEEPALIVE_MS
 
     return streamSSE(c, async stream => {
-      // The current state, before any subscription can deliver anything. A
-      // browser that reconnects a second after a push would otherwise sit on a
-      // stale frame until the *next* one — this is how it catches up (§5.5).
-      await stream.writeSSE({
-        event: 'hello',
-        data: state(art.version, art.contentHash.toString('hex')),
-      })
-
       // The handler has to stay on the stack for the stream to stay open, so
       // it parks here until something ends it.
       let finished = () => {}
@@ -59,8 +51,12 @@ export function registerEventRoutes(app: Hono<AppEnv>, deps: Deps): void {
       const unsubscribe = notifier.subscribe(art.id, update => {
         // Not awaited: this runs inside the notifier's dispatch loop, and one
         // slow reader must not hold up every other stream. Writes to a stream
-        // that has gone away are swallowed by hono rather than thrown.
-        void stream.writeSSE({ event: 'updated', data: state(update.version, update.hash) })
+        // that has gone away are swallowed by hono today; the `catch` is so a
+        // future version that stops swallowing them cannot turn a disconnect
+        // into an unhandled rejection.
+        void stream
+          .writeSSE({ event: 'updated', data: state(update.version, update.hash) })
+          .catch(() => {})
       })
 
       const keepalive = setInterval(() => void stream.write(': ping\n\n'), keepaliveMs)
@@ -78,6 +74,18 @@ export function registerEventRoutes(app: Hono<AppEnv>, deps: Deps): void {
       }
       stream.onAbort(done)
       c.req.raw.signal?.addEventListener('abort', done, { once: true })
+
+      // The current state — written *after* the subscription is live. A push
+      // that lands between the two is then delivered as an `updated` rather
+      // than falling into the gap between "read the version" and "start
+      // listening", and the shell ignores an update it has already seen, so an
+      // `updated` that arrives before or repeats the `hello` costs nothing.
+      // A browser that reconnects a second after a push needs this to catch up
+      // at all (§5.5).
+      await stream.writeSSE({
+        event: 'hello',
+        data: state(art.version, art.contentHash.toString('hex')),
+      })
 
       await until
     })

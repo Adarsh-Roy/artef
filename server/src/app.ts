@@ -14,6 +14,7 @@ import { originCheck } from './auth/origin.js'
 import { sessionMiddleware } from './auth/session.js'
 import type { Notifier } from './notify.js'
 import { registerArtifactRoutes } from './routes/artifacts.js'
+import { registerAssetRoutes } from './routes/assets.js'
 import { registerContentRoutes } from './routes/content.js'
 import { registerEventRoutes } from './routes/events.js'
 import { registerGrantRoutes } from './routes/grants.js'
@@ -88,6 +89,7 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   registerContentRoutes(app, deps)
   registerEventRoutes(app, deps)
   registerGrantRoutes(app, deps)
+  registerAssetRoutes(app, deps)
   // Last, because `GET /:id` matches any single path segment. It hands anything
   // that is not shaped like an artifact id straight on to the next handler, so
   // registration order is not what keeps /_health working — but a route that
