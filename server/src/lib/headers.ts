@@ -35,9 +35,13 @@ export const ASSET_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'
  * for the EventSource and the dialog's fetches. `base-uri 'none'` is the one
  * pure restriction — nothing here needs a `<base>`, and an injected one would
  * repoint every relative URL on the page.
+ *
+ * `frame-ancestors 'self'` is the clickjacking floor: this page holds the
+ * reader's session and a Share button that changes who can read a document, so
+ * another site must not be able to frame it and trick someone into clicking.
  */
 export const SHELL_CSP =
-  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; base-uri 'none'"
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'self'"
 
 /** `/c/:id` — the artifact itself, framed by the shell page. */
 export function artifactPageHeaders(): Record<string, string> {

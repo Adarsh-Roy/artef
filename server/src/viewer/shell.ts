@@ -129,6 +129,13 @@ function ogTags(title: string, siteUrl: string, id: string): string {
  * update arrives, so a private document takes a fresh one for each reload. A
  * public one needs no token and reloads with a cache-buster instead. Only the
  * branch that applies is emitted, so a public page never even mentions `?t=`.
+ *
+ * `hello` and `updated` are handled by the same code path because they carry
+ * the same `{version, hash}`. That is what makes a dropped connection
+ * survivable: an EventSource reconnects by itself, the fresh stream opens with
+ * the version the server holds *now*, and a push that landed while the page was
+ * disconnected is caught up there instead of leaving the frame stale until the
+ * next one.
  */
 function liveScript(o: ShellOpts, isPublic: boolean): string {
   const id = jsString(o.id)
@@ -145,12 +152,21 @@ function liveScript(o: ShellOpts, isPublic: boolean): string {
   const frame = document.getElementById('artifact-frame')
   const stamp = document.querySelector('time[datetime]')
   if (stamp) { try { stamp.textContent = new Date(stamp.dateTime).toLocaleString() } catch (e) {} }
+  // What the frame is already showing, so the hello on the first connection
+  // reloads nothing.
+  let shown = ${o.version}
   const events = new EventSource('/api/artifacts/' + id + '/events')
-  events.addEventListener('updated', async () => {
-    try {
-      ${reload}
-    } catch (e) {}
-  })
+  for (const kind of ['hello', 'updated']) {
+    events.addEventListener(kind, async event => {
+      let version = null
+      try { version = JSON.parse(event.data).version } catch (e) { return }
+      if (typeof version !== 'number' || version <= shown) return
+      shown = version
+      try {
+        ${reload}
+      } catch (e) {}
+    })
+  }
 })()
 `
 }

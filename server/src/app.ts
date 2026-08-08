@@ -12,25 +12,27 @@ import { bearerMiddleware } from './auth/bearer.js'
 import { registerAuthRoutes } from './auth/oidc.js'
 import { originCheck } from './auth/origin.js'
 import { sessionMiddleware } from './auth/session.js'
+import type { Notifier } from './notify.js'
 import { registerArtifactRoutes } from './routes/artifacts.js'
 import { registerContentRoutes } from './routes/content.js'
+import { registerEventRoutes } from './routes/events.js'
 import { registerGrantRoutes } from './routes/grants.js'
 import { registerTokenRoutes } from './routes/tokens.js'
 import { registerViewerRoutes } from './viewer/routes.js'
-
-/** Live-update fan-out (spec §5.5). Optional until the SSE milestone builds it. */
-export interface Notifier {
-  publish(artifactId: string): void | Promise<void>
-}
 
 export interface Deps {
   cfg: Config
   db: NodePgDatabase<typeof schema>
   pool: pg.Pool
+  /** Live-update fan-out (spec §5.5). `index.ts` always creates one; a test
+   *  that does not care about updates leaves it out and the events route 503s. */
   notifier?: Notifier
   /** Wall clock, injectable so time-windowed behaviour (the write rate limit)
    *  can be tested without sleeping. Defaults to `Date.now`. */
   now?: () => number
+  /** How often an idle SSE stream sends its keepalive comment. Injectable for
+   *  the same reason as the clock — a test cannot wait 30 seconds. */
+  keepaliveMs?: number
 }
 
 /** Request-scoped identity, set by the auth middleware and read by every route. */
@@ -84,6 +86,7 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   // never see it.
   registerArtifactRoutes(app, deps)
   registerContentRoutes(app, deps)
+  registerEventRoutes(app, deps)
   registerGrantRoutes(app, deps)
   // Last, because `GET /:id` matches any single path segment. It hands anything
   // that is not shaped like an artifact id straight on to the next handler, so

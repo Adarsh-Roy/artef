@@ -59,9 +59,9 @@ export type TestDeps = Deps & { app: Hono<AppEnv> }
 
 export async function testDeps(
   cfgOverrides: Partial<Config> = {},
-  // The clock and the notifier are the two dependencies a test may need to
-  // control, so they are passed in rather than reached for.
-  extra: Partial<Pick<Deps, 'notifier' | 'now'>> = {},
+  // The clock, the notifier and the keepalive period are the dependencies a
+  // test may need to control, so they are passed in rather than reached for.
+  extra: Partial<Pick<Deps, 'notifier' | 'now' | 'keepaliveMs'>> = {},
 ): Promise<TestDeps> {
   const { db, pool } = await connect()
   const deps: Deps = { cfg: testConfig(cfgOverrides), db, pool, ...extra }

@@ -148,6 +148,22 @@ describe('GET /a/:id', () => {
     expect(body).not.toContain('?t=')
   })
 
+  it('reloads on hello as well as updated, and only for a newer version', async () => {
+    const { art, cookie } = await published()
+
+    const body = await (await shell(art.id, { Cookie: cookie })).text()
+
+    // Both events, one code path: `hello` is what an EventSource that
+    // reconnected by itself gets, and a push missed while it was down is caught
+    // up there rather than leaving the frame stale (§5.5).
+    expect(body).toContain(`new EventSource('/api/artifacts/' + id + '/events')`)
+    expect(body).toContain(`for (const kind of ['hello', 'updated'])`)
+    // The version already on screen — one push has happened — so the first
+    // hello reloads nothing.
+    expect(body).toContain('let shown = 1')
+    expect(body).toContain('version <= shown) return')
+  })
+
   it('escapes an artifact name that is an XSS attempt, in the page and the OG tag', async () => {
     const { art, cookie } = await published({ name: XSS_NAME })
 
@@ -197,6 +213,9 @@ describe('GET /a/:id', () => {
     expect(SHELL_CSP).toContain("connect-src 'self'")
     expect(SHELL_CSP).toContain("frame-src 'self'")
     expect(SHELL_CSP).toContain("base-uri 'none'")
+    // And nobody else's page may frame this one: it holds the reader's session
+    // and a Share button that changes who can read the document.
+    expect(SHELL_CSP).toContain("frame-ancestors 'self'")
   })
 
   it('offers logout to a signed-in reader and sign-in to an anonymous one', async () => {
