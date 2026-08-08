@@ -4,8 +4,12 @@
 //! CLI needs is an artef machine token. The CLI opens a listener on a loopback port,
 //! sends the browser to `{server}/cli/auth` carrying that port and a random `state`, the
 //! user signs in normally, and the server redirects the browser back to the listener with
-//! a freshly minted token. The `state` is what ties the callback to this terminal: a
-//! callback carrying anyone else's is answered and ignored, and the wait goes on.
+//! a one-time `code` — never the token itself, which would sit in browser history. The
+//! CLI then trades that code for the token at `{server}/cli/auth/exchange` (spec §7.2).
+//! The code is single-use and lives about a minute, so the exchange happens at once.
+//!
+//! The `state` is what ties the callback to this terminal: a callback carrying anyone
+//! else's is answered and ignored, and the wait goes on.
 //!
 //! `--token` skips all of it, for machines with no browser to open.
 
@@ -43,12 +47,12 @@ pub struct Options<'a> {
 
 /// What arrived on the loopback listener.
 enum Callback {
-    /// The callback this terminal was waiting for.
-    Token(String),
+    /// The callback this terminal was waiting for, carrying the one-time code.
+    Code(String),
     /// A callback for some other terminal's login.
     WrongState,
-    /// Our callback, but with nothing in it.
-    NoToken,
+    /// Our callback, but with no code in it.
+    NoCode,
     /// Not the callback at all.
     NotOurs,
 }
@@ -68,7 +72,7 @@ pub async fn run(options: &Options<'_>) -> Result<i32> {
                 .with_context(|| format!("checking that token against {server}"))?;
             finish(&mut out, &config_path, &server, token)
         }
-        None => login_with_browser(&mut out, &config_path, &server, WAIT, open_browser),
+        None => login_with_browser(&mut out, &config_path, &server, WAIT, open_browser).await,
     }
 }
 
@@ -99,15 +103,21 @@ fn open_browser(url: &str) -> Result<()> {
     webbrowser::open(url).map(|_| ()).map_err(Into::into)
 }
 
-/// The browser round-trip, with the browser handed in so tests can play it.
-fn login_with_browser(
+/// The browser round-trip, with the browser handed in so tests can play it. The listener
+/// hands back a one-time code; the token comes from trading that code at the server.
+async fn login_with_browser(
     out: &mut impl Write,
     config_path: &Path,
     server: &str,
     wait: Duration,
     open: impl Fn(&str) -> Result<()>,
 ) -> Result<i32> {
-    let token = wait_for_token(out, server, wait, open)?;
+    let code = wait_for_code(out, server, wait, open).await?;
+    // The code dies within a minute and is good for exactly one exchange, so it is spent
+    // the instant it arrives.
+    let token = ApiClient::exchange_code(server, &code)
+        .await
+        .context("trading the login code for a token")?;
     finish(out, config_path, server, &token)
 }
 
@@ -124,8 +134,9 @@ fn finish(out: &mut impl Write, config_path: &Path, server: &str, token: &str) -
     Ok(0)
 }
 
-/// Open the listener, send the user to the server, and wait for the token to come back.
-fn wait_for_token(
+/// Open the listener, send the user to the server, and wait for the one-time code to
+/// come back on the loopback.
+async fn wait_for_code(
     out: &mut impl Write,
     server: &str,
     wait: Duration,
@@ -157,10 +168,14 @@ fn wait_for_token(
         out.flush()?;
     }
 
-    listen(&listener, &state, wait)
+    // `listen` blocks a whole thread until the browser knocks, so it waits on the
+    // blocking pool rather than tying up the async executor.
+    tokio::task::spawn_blocking(move || listen(&listener, &state, wait))
+        .await
+        .context("waiting for the browser to come back")?
 }
 
-/// Answer everything that knocks, and return only the token meant for this terminal.
+/// Answer everything that knocks, and return only the code meant for this terminal.
 fn listen(listener: &Server, state: &str, wait: Duration) -> Result<String> {
     let deadline = Instant::now() + wait;
 
@@ -183,11 +198,11 @@ fn listen(listener: &Server, state: &str, wait: Duration) -> Result<String> {
         };
 
         match read_callback(request.url(), state) {
-            Callback::Token(token) => {
+            Callback::Code(code) => {
                 // A browser that never sees the page is a browser left spinning, so the
-                // reply goes out before the token is used for anything.
+                // reply goes out before the code is traded for anything.
                 let _ = request.respond(page(200, "Logged in — you can close this tab."));
-                return Ok(token);
+                return Ok(code);
             }
             Callback::WrongState => {
                 let _ = request.respond(page(
@@ -195,9 +210,9 @@ fn listen(listener: &Server, state: &str, wait: Duration) -> Result<String> {
                     "That sign-in belongs to a different terminal. Nothing was saved.",
                 ));
             }
-            Callback::NoToken => {
-                let _ = request.respond(page(400, "That sign-in carried no token."));
-                bail!("the server's callback carried no token");
+            Callback::NoCode => {
+                let _ = request.respond(page(400, "That sign-in carried no code."));
+                bail!("the server's callback carried no code");
             }
             Callback::NotOurs => {
                 let _ = request.respond(page(404, "Nothing here."));
@@ -216,11 +231,11 @@ fn read_callback(raw_url: &str, state: &str) -> Callback {
         return Callback::NotOurs;
     }
 
-    let mut token = None;
+    let mut code = None;
     let mut carried_state = None;
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
-            "token" => token = Some(value.into_owned()),
+            "code" => code = Some(value.into_owned()),
             "state" => carried_state = Some(value.into_owned()),
             _ => {}
         }
@@ -229,9 +244,9 @@ fn read_callback(raw_url: &str, state: &str) -> Callback {
     if carried_state.as_deref() != Some(state) {
         return Callback::WrongState;
     }
-    match token {
-        Some(token) if !token.is_empty() => Callback::Token(token),
-        _ => Callback::NoToken,
+    match code {
+        Some(code) if !code.is_empty() => Callback::Code(code),
+        _ => Callback::NoCode,
     }
 }
 
@@ -270,12 +285,16 @@ mod tests {
     use anyhow::anyhow;
     use tokio::task::JoinHandle;
     use url::Url;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
 
-    const SERVER: &str = "https://artef.example.com";
+    /// A server the exchange never actually reaches — for the tests that time out or
+    /// only check the URL, and never get as far as trading a code.
+    const UNREACHED_SERVER: &str = "https://artef.example.com";
 
-    /// The browser flow running on a thread of its own, plus the URL it told the user to
+    /// The browser flow running on a task of its own, plus the URL it told the user to
     /// open. Holding the handle lets a test play the browser and then read the outcome.
     struct Flow {
         url: String,
@@ -284,14 +303,15 @@ mod tests {
 
     /// Start the flow with the browser replaced by a channel, so the test sees the URL
     /// instead of a window opening.
-    async fn start(config_path: PathBuf, wait: Duration) -> Flow {
+    async fn start(config_path: PathBuf, server: String, wait: Duration) -> Flow {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let task = tokio::task::spawn_blocking(move || {
+        let task = tokio::spawn(async move {
             let mut out = Vec::new();
-            let outcome = login_with_browser(&mut out, &config_path, SERVER, wait, |url| {
+            let outcome = login_with_browser(&mut out, &config_path, &server, wait, move |url| {
                 let _ = tx.send(url.to_string());
                 Ok(())
-            });
+            })
+            .await;
             (outcome, out)
         });
 
@@ -300,6 +320,21 @@ mod tests {
             .await
             .expect("the flow shows a URL before it starts waiting");
         Flow { url, task }
+    }
+
+    /// A stand-in `/cli/auth/exchange`: it answers 200 with a token, or 400 with the
+    /// server's own words, exactly as the real one does (spec §7.2).
+    async fn mock_exchange(server: &MockServer, status: u16, token: &str) {
+        let body = if status == 200 {
+            serde_json::json!({ "token": token })
+        } else {
+            serde_json::json!({ "error": "invalid or expired code" })
+        };
+        Mock::given(method("POST"))
+            .and(path("/cli/auth/exchange"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(server)
+            .await;
     }
 
     fn port_and_state(url: &str) -> (u16, String) {
@@ -329,49 +364,83 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn the_browser_hands_the_token_back_through_the_loopback() {
+    async fn the_browser_hands_a_code_back_and_the_cli_trades_it_for_a_token() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
-        let flow = start(path.clone(), Duration::from_secs(30)).await;
+        let server = MockServer::start().await;
+        mock_exchange(&server, 200, "art_live_right").await;
+        let uri = server.uri();
+
+        let flow = start(path.clone(), uri.clone(), Duration::from_secs(30)).await;
         let (port, state) = port_and_state(&flow.url);
         assert_eq!(
             flow.url,
-            format!("{SERVER}/cli/auth?port={port}&state={state}")
+            format!("{uri}/cli/auth?port={port}&state={state}")
         );
 
         // Stray traffic on the port is not the callback, and does not end the wait.
         assert_eq!(get(port, "favicon.ico").await.0, 404);
         // Neither is a callback carrying some other terminal's state.
         assert_eq!(
-            get(port, "callback?token=art_live_wrong&state=someone-else")
+            get(port, "callback?code=someone-elses-code&state=someone-else")
                 .await
                 .0,
             400
         );
 
-        let (status, body) = get(
-            port,
-            &format!("callback?token=art_live_right&state={state}"),
-        )
-        .await;
+        let (status, body) = get(port, &format!("callback?code=one-time-code&state={state}")).await;
         assert_eq!(status, 200);
         assert!(body.contains("you can close this tab"), "body was {body}");
 
         let (outcome, printed) = flow.task.await.expect("the flow finished");
         assert_eq!(outcome.unwrap(), 0);
 
+        // The token that is saved is the one the exchange returned — never anything the
+        // browser put in the callback URL.
         let saved = std::fs::read_to_string(&path).expect("a config file");
         assert!(saved.contains("art_live_right"), "config was {saved}");
-        assert!(!saved.contains("art_live_wrong"), "config was {saved}");
-        assert!(saved.contains(SERVER), "config was {saved}");
+        assert!(saved.contains(&uri), "config was {saved}");
+
+        // The CLI POSTed the exact code it received to the exchange endpoint.
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "expected exactly one exchange call");
+        assert_eq!(requests[0].method.as_str(), "POST");
+        assert_eq!(requests[0].url.path(), "/cli/auth/exchange");
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body["code"], "one-time-code");
 
         let printed = String::from_utf8(printed).unwrap();
         assert!(printed.contains(&flow.url), "printed {printed}");
         assert!(
-            printed.contains(&format!("logged in to {SERVER}")),
+            printed.contains(&format!("logged in to {uri}")),
             "printed {printed}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_code_the_server_will_not_exchange_fails_and_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let server = MockServer::start().await;
+        mock_exchange(&server, 400, "").await;
+
+        let flow = start(path.clone(), server.uri(), Duration::from_secs(30)).await;
+        let (port, state) = port_and_state(&flow.url);
+
+        // The browser is answered as soon as it delivers a well-formed code; whether the
+        // CLI can redeem it is the terminal's problem, not the browser tab's.
+        let (status, _) = get(port, &format!("callback?code=stale-code&state={state}")).await;
+        assert_eq!(status, 200);
+
+        let (outcome, _) = flow.task.await.expect("the flow finished");
+        let err = outcome.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("invalid or expired code"),
+            "error was {err:#}"
+        );
+        assert!(!path.exists(), "a failed exchange wrote a config file");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -379,7 +448,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
-        let flow = start(path.clone(), Duration::from_millis(50)).await;
+        let flow = start(
+            path.clone(),
+            UNREACHED_SERVER.to_string(),
+            Duration::from_millis(50),
+        )
+        .await;
 
         let err = flow.task.await.expect("the flow finished").0.unwrap_err();
         assert!(
@@ -389,18 +463,19 @@ mod tests {
         assert!(!path.exists(), "a timed-out login wrote a config file");
     }
 
-    #[test]
-    fn a_browser_that_will_not_open_leaves_the_url_on_screen() {
+    #[tokio::test]
+    async fn a_browser_that_will_not_open_leaves_the_url_on_screen() {
         let dir = tempfile::tempdir().unwrap();
         let mut out = Vec::new();
 
         let outcome = login_with_browser(
             &mut out,
             &dir.path().join("config.toml"),
-            SERVER,
+            UNREACHED_SERVER,
             Duration::from_millis(50),
             |_| Err(anyhow!("no browser here")),
-        );
+        )
+        .await;
 
         assert!(outcome.is_err(), "the wait should still have timed out");
         let printed = String::from_utf8(out).unwrap();
@@ -425,27 +500,27 @@ mod tests {
     #[test]
     fn only_a_callback_carrying_this_terminals_state_counts() {
         assert!(matches!(
-            read_callback("/callback?token=art_live_x&state=abc", "abc"),
-            Callback::Token(token) if token == "art_live_x"
+            read_callback("/callback?code=abc123&state=abc", "abc"),
+            Callback::Code(code) if code == "abc123"
         ));
         assert!(matches!(
-            read_callback("/callback?token=art_live_x&state=nope", "abc"),
+            read_callback("/callback?code=abc123&state=nope", "abc"),
             Callback::WrongState
         ));
         assert!(matches!(
-            read_callback("/callback?token=art_live_x", "abc"),
+            read_callback("/callback?code=abc123", "abc"),
             Callback::WrongState
         ));
         assert!(matches!(
             read_callback("/callback?state=abc", "abc"),
-            Callback::NoToken
+            Callback::NoCode
         ));
         assert!(matches!(
             read_callback("/favicon.ico", "abc"),
             Callback::NotOurs
         ));
         assert!(matches!(
-            read_callback("/callback/extra?token=t&state=abc", "abc"),
+            read_callback("/callback/extra?code=t&state=abc", "abc"),
             Callback::NotOurs
         ));
     }

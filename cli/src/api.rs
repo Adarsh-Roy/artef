@@ -106,27 +106,49 @@ struct UploadedAsset {
     url: String,
 }
 
+/// The body of `POST /cli/auth/exchange`: the one-time code, and nothing else.
+#[derive(Debug, Serialize)]
+struct ExchangeRequest<'a> {
+    code: &'a str,
+}
+
+/// What the exchange hands back: the machine token to store.
+#[derive(Debug, Deserialize)]
+struct ExchangeResponse {
+    token: String,
+}
+
 impl ApiClient {
     pub fn new(server: &str, token: &str) -> Result<Self> {
-        let mut base =
-            Url::parse(server).with_context(|| format!("{server} is not a URL I can talk to"))?;
-
-        // Endpoints are joined onto this base, and `Url::join` drops the last path
-        // segment unless the base ends in a slash — so a server at
-        // `https://host/artef` would otherwise lose its `/artef` prefix.
-        if !base.path().ends_with('/') {
-            let path = format!("{}/", base.path());
-            base.set_path(&path);
-        }
-
         Ok(Self {
-            base,
+            base: normalized_base(server)?,
             token: token.to_string(),
-            http: Client::builder()
-                .user_agent(USER_AGENT)
-                .build()
-                .context("building the HTTP client")?,
+            http: http_client()?,
         })
+    }
+
+    /// `POST {server}/cli/auth/exchange` — trade the one-time login code for a machine
+    /// token (spec §7.2). This is the one call the CLI makes with no token of its own:
+    /// the code *is* the credential, so no bearer goes with it. The code is single-use
+    /// and dies within a minute, so the browser flow calls this the instant it has one.
+    pub async fn exchange_code(server: &str, code: &str) -> Result<String> {
+        let endpoint = normalized_base(server)?
+            .join("cli/auth/exchange")
+            .context("building the login-exchange URL")?;
+
+        let response = http_client()?
+            .post(endpoint)
+            .json(&ExchangeRequest { code })
+            .send()
+            .await
+            .with_context(|| format!("reaching {server}"))?;
+
+        let body: ExchangeResponse = checked(response, "exchanging the login code")
+            .await?
+            .json()
+            .await
+            .context("reading the exchanged token")?;
+        Ok(body.token)
     }
 
     /// The client the commands use: the configured server, and a token or an
@@ -401,6 +423,27 @@ impl ApiClient {
     }
 }
 
+/// The server URL as a base to join endpoints onto: a valid URL whose path ends in a
+/// slash. `Url::join` drops the last path segment unless the base ends in a slash, so a
+/// server at `https://host/artef` would otherwise lose its `/artef` prefix.
+fn normalized_base(server: &str) -> Result<Url> {
+    let mut base =
+        Url::parse(server).with_context(|| format!("{server} is not a URL I can talk to"))?;
+    if !base.path().ends_with('/') {
+        let path = format!("{}/", base.path());
+        base.set_path(&path);
+    }
+    Ok(base)
+}
+
+/// The HTTP client every call goes through, tagged so the server sees which CLI it is.
+fn http_client() -> Result<Client> {
+    Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .context("building the HTTP client")
+}
+
 /// The short URL people share: `{server}/{id}`, which redirects to the viewer (spec §5.7).
 pub fn share_url(server: &str, id: &str) -> String {
     format!("{}/{id}", server.trim_end_matches('/'))
@@ -594,6 +637,61 @@ mod tests {
         let url = client.upload_asset(b"png", "image/png").await.unwrap();
 
         assert_eq!(url.as_deref(), Some("/assets/ab12"));
+    }
+
+    #[tokio::test]
+    async fn a_login_code_is_traded_for_the_token_the_server_returns() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/cli/auth/exchange"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "token": "art_live_fresh",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let token = ApiClient::exchange_code(&server.uri(), "one-time-code")
+            .await
+            .unwrap();
+        assert_eq!(token, "art_live_fresh");
+
+        let request = &server.received_requests().await.unwrap()[0];
+        assert_eq!(request.url.path(), "/cli/auth/exchange");
+        let content_type = request
+            .headers
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            content_type.starts_with("application/json"),
+            "content type was {content_type}"
+        );
+        // The code is the whole credential, so the exchange carries no bearer.
+        assert!(request.headers.get("authorization").is_none());
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(body["code"], "one-time-code");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_login_code_fails_with_the_servers_words() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/cli/auth/exchange"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid or expired code",
+            })))
+            .mount(&server)
+            .await;
+
+        let err = ApiClient::exchange_code(&server.uri(), "stale")
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("invalid or expired code"),
+            "error was {err:#}"
+        );
     }
 
     /// A duplicate that says nothing readable is still a duplicate.
