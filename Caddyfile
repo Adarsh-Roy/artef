@@ -1,0 +1,5 @@
+# Automatic HTTPS for one host. Caddy fetches and renews the certificate on its
+# own, so setup needs one DNS A record and no manual certificate step.
+{$DOMAIN} {
+	reverse_proxy app:3000
+}

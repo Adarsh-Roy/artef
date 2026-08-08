@@ -1,0 +1,60 @@
+# artef — three services on one domain (spec §10):
+#
+#   caddy       TLS for a single host, reverse-proxies to the app
+#   app         Node — API, auth, ACL, viewer shell, sandboxed content, assets
+#   postgres    metadata, ACL, and blobs
+#
+# No Redis (Postgres LISTEN/NOTIFY replaces it), no oauth2-proxy, no second
+# origin. Two services fewer than a standard Outline deployment.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: "${DOMAIN}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # DATABASE_URL and PORT are set here so they always match the compose
+      # network and image, and override anything in .env. This is why the
+      # operator never has to hand-write a connection string.
+      DATABASE_URL: "postgres://artef:${POSTGRES_PASSWORD:-artef}@postgres:5432/artef"
+      PORT: "3000"
+    # Uncomment to reach the app directly, without Caddy, for local testing:
+    # ports:
+    #   - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: artef
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-artef}"
+      POSTGRES_DB: artef
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U artef -d artef"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_data:

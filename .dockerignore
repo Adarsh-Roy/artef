@@ -1,0 +1,21 @@
+# Build the server image from source only. Everything below is either rebuilt
+# inside the image, unrelated to the server, or a secret that must never be
+# baked into a layer.
+**/node_modules
+**/dist
+**/target
+.git
+.gitignore
+**/.env
+.env
+
+# Not part of the server image.
+cli/
+docs/
+skill/
+.superpowers/
+.claude/
+*.md
+artef-spec.md
+docker-compose*.yml
+Caddyfile
