@@ -275,9 +275,11 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: Deps): void {
         pkceCodeVerifier: stash.verifier,
       })
       claims = tokens.claims()
-    } catch {
+    } catch (err) {
       // Bad state, replayed code, clock skew, IdP outage: all the same to the
-      // person in front of the browser, and none of them their business.
+      // person in front of the browser, and none of them their business — but
+      // the operator debugging a login that never completes needs the cause.
+      console.error(`OIDC code exchange failed for ${p.issuer.href}:`, err)
       return interruptedPage(c)
     }
     if (claims === undefined) return interruptedPage(c)

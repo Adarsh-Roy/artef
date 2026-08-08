@@ -6,8 +6,8 @@ import { eq } from 'drizzle-orm'
 import type { Hono } from 'hono'
 import type { Config } from '../src/config.js'
 import { createDb, runMigrations } from '../src/db/client.js'
-import { users, workspaces } from '../src/db/schema.js'
-import { signSession } from '../src/lib/crypto.js'
+import { machineTokens, users, workspaces } from '../src/db/schema.js'
+import { generateMachineToken, signSession } from '../src/lib/crypto.js'
 import { createApp, type AppEnv, type Deps } from '../src/app.js'
 import { SESSION_COOKIE, SESSION_TTL_DAYS } from '../src/auth/session.js'
 
@@ -122,4 +122,39 @@ export async function makeUser(
     .returning()
 
   return { user, workspace, cookie: sessionCookie(user.id, deps.cfg.secretKey) }
+}
+
+let tokenSeq = 0
+
+/**
+ * A machine token written straight to the table, so a test can authenticate as
+ * an agent without going through `POST /api/tokens` first. The plaintext token
+ * only exists here — the row keeps its hash, exactly as the real route does.
+ */
+export async function makeMachineToken(
+  deps: Deps,
+  userId: string,
+  opts: { name?: string; scopeIds?: string[] | null; expiresAt?: Date | null } = {},
+): Promise<{
+  token: string
+  row: typeof machineTokens.$inferSelect
+  header: { Authorization: string }
+}> {
+  const [user] = await deps.db.select().from(users).where(eq(users.id, userId)).limit(1)
+  const { token, hash, prefix } = generateMachineToken()
+
+  const [row] = await deps.db
+    .insert(machineTokens)
+    .values({
+      workspaceId: user.workspaceId,
+      userId,
+      name: opts.name ?? `token-${++tokenSeq}`,
+      tokenHash: hash,
+      prefix,
+      scopeIds: opts.scopeIds ?? null,
+      expiresAt: opts.expiresAt ?? null,
+    })
+    .returning()
+
+  return { token, row, header: { Authorization: `Bearer ${token}` } }
 }

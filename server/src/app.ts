@@ -8,9 +8,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { Config } from './config.js'
 import type * as schema from './db/schema.js'
 import type { users } from './db/schema.js'
+import { bearerMiddleware } from './auth/bearer.js'
 import { registerAuthRoutes } from './auth/oidc.js'
 import { originCheck } from './auth/origin.js'
 import { sessionMiddleware } from './auth/session.js'
+import { registerTokenRoutes } from './routes/tokens.js'
 
 /** Live-update fan-out (spec §5.5). Optional until the SSE milestone builds it. */
 export interface Notifier {
@@ -37,11 +39,16 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   app.use('*', sessionMiddleware(deps))
+  // Order is load-bearing: bearer runs after the session so a token wins over a
+  // stray cookie, and before the origin check so `authKind` is already 'bearer'
+  // when that check decides whether an Origin header is required.
+  app.use('*', bearerMiddleware(deps))
   // Mounted before any route so it also covers /api paths that do not exist
   // yet — a state-changing request must never reach a handler unchecked.
   app.use('/api/*', originCheck(deps.cfg))
 
   registerAuthRoutes(app, deps)
+  registerTokenRoutes(app, deps)
 
   // Spec §10: 200 exactly when the database is reachable.
   app.get('/_health', async c => {

@@ -339,10 +339,12 @@ describe('origin check', () => {
     expect(res.status).toBe(200)
   })
 
-  // Agents send `Authorization: Bearer`, never a cookie, so they are immune to
-  // the browser attack the Origin check exists to stop.
+  // The check exists to stop a browser being made to act as its logged-in
+  // user, so a request carrying no session has nothing to forge. Agents send
+  // `Authorization: Bearer` and never a cookie — that exemption is proved
+  // against a real token in tokens.test.ts.
   it('does not block a request with no session cookie', async () => {
-    const res = await post(deps.app, { Authorization: 'Bearer art_live_whatever' })
+    const res = await post(deps.app, {})
     expect(res.status).toBe(200)
   })
 
@@ -596,13 +598,21 @@ describe('callback', () => {
   })
 
   it('turns a failed code exchange into a 400, not a stack trace', async () => {
-    vi.mocked(oidcLib.authorizationCodeGrant).mockRejectedValue(new Error('invalid_grant'))
-    const { state, cookie } = await startLogin(deps.app)
-    const res = await deps.app.request(`/auth/google/callback?code=abc&state=${state}`, {
-      headers: { Cookie: cookie },
-    })
-    expect(res.status).toBe(400)
-    expect(await res.text()).not.toContain('invalid_grant')
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      vi.mocked(oidcLib.authorizationCodeGrant).mockRejectedValue(new Error('invalid_grant'))
+      const { state, cookie } = await startLogin(deps.app)
+      const res = await deps.app.request(`/auth/google/callback?code=abc&state=${state}`, {
+        headers: { Cookie: cookie },
+      })
+      expect(res.status).toBe(400)
+      expect(await res.text()).not.toContain('invalid_grant')
+      // The page says nothing, so the log is the only place the operator can
+      // find out why every login is dying.
+      expect(logged).toHaveBeenCalled()
+    } finally {
+      logged.mockRestore()
+    }
   })
 })
 
