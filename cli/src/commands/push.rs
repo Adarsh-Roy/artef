@@ -16,9 +16,10 @@ use sha2::{Digest, Sha256};
 
 use crate::api::{self, ApiClient, PutOutcome};
 use crate::commands::lint::format_violation;
+use crate::commands::{state_key, track};
 use crate::config::GlobalConfig;
 use crate::lint::{lint_html, Severity};
-use crate::state::{Entry, State};
+use crate::state::State;
 
 /// Everything `artef push` was asked to do.
 pub struct Options<'a> {
@@ -141,22 +142,15 @@ fn preflight(html: &str) -> Result<()> {
 /// Task 17 fills this in: it will pull large inline `data:` images out of the document,
 /// `POST` them to `/api/assets`, and rewrite the attributes to `/assets/<sha>`. Until
 /// then the document is uploaded exactly as it was written.
-async fn apply_asset_extraction(html: &str, api: &ApiClient, no_extract: bool) -> Result<String> {
+///
+/// The daemon goes through here too, so filling it in fixes both paths at once.
+pub(crate) async fn apply_asset_extraction(
+    html: &str,
+    api: &ApiClient,
+    no_extract: bool,
+) -> Result<String> {
     let _ = (api, no_extract);
     Ok(html.to_string())
-}
-
-/// Remember which artifact a file belongs to, and what we last pushed (spec §7.3).
-fn track(state: &mut State, dir: &Path, key: &str, id: &str, hash: &str) -> Result<()> {
-    let entry = Entry {
-        id: id.to_string(),
-        hash: hash.to_string(),
-    };
-    if state.artifacts.get(key) == Some(&entry) {
-        return Ok(());
-    }
-    state.artifacts.insert(key.to_string(), entry);
-    state.save(dir)
 }
 
 /// SHA-256 of the document as written, which is what the server compares against.
@@ -170,13 +164,6 @@ pub fn gzip(bytes: &[u8]) -> Result<Vec<u8>> {
         .write_all(bytes)
         .context("compressing the document")?;
     encoder.finish().context("compressing the document")
-}
-
-/// The state key for a file: the path exactly as the user typed it (spec §7.3), so
-/// `artef push ./status.html` and `artef push status.html` are two different keys but
-/// each one keeps working.
-fn state_key(file: &Path) -> String {
-    file.to_string_lossy().into_owned()
 }
 
 #[cfg(test)]
@@ -213,12 +200,6 @@ mod tests {
 
         preflight(r#"<script>fetch('/a')</script>"#).unwrap();
         preflight("<h1>clean</h1>").unwrap();
-    }
-
-    #[test]
-    fn the_state_key_is_the_path_as_typed() {
-        assert_eq!(state_key(Path::new("reports/q3.html")), "reports/q3.html");
-        assert_eq!(state_key(Path::new("./q3.html")), "./q3.html");
     }
 
     #[tokio::test]

@@ -10,7 +10,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
 use flate2::read::GzDecoder;
 use serde_json::{json, Value};
@@ -110,7 +110,78 @@ impl Cli {
         self.run_inner(None, args, None)
     }
 
+    /// Start a run that does not end on its own — `watch`, `daemon` — with its output
+    /// going to files the test can read while it is still going.
+    pub fn spawn(&self, server: &MockServer, args: &[&str]) -> Running {
+        let mut command = self.command(Some(server.uri()), args, Some(TOKEN));
+        let child = command
+            .stdout(Stdio::from(
+                std::fs::File::create(self.stdout_path()).expect("creating the stdout file"),
+            ))
+            .stderr(Stdio::from(
+                std::fs::File::create(self.stderr_path()).expect("creating the stderr file"),
+            ))
+            .spawn()
+            .expect("starting artef");
+        Running { child: Some(child) }
+    }
+
+    fn stdout_path(&self) -> PathBuf {
+        self.dir.path().join("artef.stdout")
+    }
+
+    fn stderr_path(&self) -> PathBuf {
+        self.dir.path().join("artef.stderr")
+    }
+
+    /// Every log line a spawned run has printed so far, parsed. The daemon prints one
+    /// JSON object per line (spec §7.4), so a line that is not one fails the test.
+    pub fn logs(&self) -> Vec<Value> {
+        std::fs::read_to_string(self.stdout_path())
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str(line).unwrap_or_else(|err| {
+                    panic!("a log line was not one JSON object: {line:?} ({err})")
+                })
+            })
+            .collect()
+    }
+
+    /// Wait for `count` log lines with this `event`, and hand them back.
+    pub async fn wait_for_logs(&self, event: &str, count: usize) -> Vec<Value> {
+        for _ in 0..200 {
+            let found: Vec<Value> = self
+                .logs()
+                .into_iter()
+                .filter(|line| line["event"] == event)
+                .collect();
+            if found.len() >= count {
+                return found;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!(
+            "waited for {count} {event:?} log lines and saw:\nstdout:\n{}\nstderr:\n{}",
+            std::fs::read_to_string(self.stdout_path()).unwrap_or_default(),
+            std::fs::read_to_string(self.stderr_path()).unwrap_or_default(),
+        );
+    }
+
     fn run_inner(&self, server: Option<String>, args: &[&str], token: Option<&str>) -> Run {
+        let out = self
+            .command(server, args, token)
+            .output()
+            .expect("running artef");
+        Run {
+            code: out.status.code(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }
+    }
+
+    fn command(&self, server: Option<String>, args: &[&str], token: Option<&str>) -> Command {
         let home = self.dir.path().join("home");
         std::fs::create_dir_all(&home).expect("creating fake home");
 
@@ -129,12 +200,31 @@ impl Cli {
         if let Some(token) = token {
             command.env("ARTEF_TOKEN", token);
         }
+        command
+    }
+}
 
-        let out = command.output().expect("running artef");
-        Run {
-            code: out.status.code(),
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+/// A spawned `artef` that keeps going until the test stops it — and until it does, so
+/// that a failed assertion never leaves a daemon behind.
+pub struct Running {
+    child: Option<Child>,
+}
+
+impl Running {
+    /// Whether it is still going. A daemon that fell over is a failed test.
+    pub fn is_running(&mut self) -> bool {
+        match self.child.as_mut().expect("already stopped").try_wait() {
+            Ok(status) => status.is_none(),
+            Err(_) => false,
+        }
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }

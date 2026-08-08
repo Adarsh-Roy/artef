@@ -141,6 +141,12 @@ impl ApiClient {
         Self::new(&config.server, token)
     }
 
+    /// The link to hand a reader, for callers that have a client but no config — the
+    /// daemon logs one for every artifact it creates or updates (spec §7.4).
+    pub fn share_url(&self, id: &str) -> String {
+        share_url(self.base.as_str(), id)
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base
             .join(path)

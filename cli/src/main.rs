@@ -1,12 +1,13 @@
 mod api;
 mod commands;
 mod config;
+mod interval;
 mod lint;
 mod state;
 
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 
 use crate::config::GlobalConfig;
@@ -91,6 +92,12 @@ enum Command {
     Watch {
         /// HTML file to watch.
         file: PathBuf,
+        /// How long to wait between pushes: 60s, 5m, 1h.
+        #[arg(long, default_value = "60s")]
+        every: String,
+        /// Command to run before each push, in the file's directory.
+        #[arg(long = "cmd")]
+        cmd: Option<String>,
     },
     /// Run every [[watch]] entry in artef.toml.
     Daemon,
@@ -199,8 +206,18 @@ async fn run(cli: Cli) -> Result<i32> {
             })
             .await
         }
-        Command::Watch { .. } => bail!("not yet implemented"),
-        Command::Daemon => bail!("not yet implemented"),
+        Command::Watch { file, every, cmd } => {
+            commands::watch::run(
+                &GlobalConfig::load()?,
+                &commands::watch::Options {
+                    file: &file,
+                    every: &every,
+                    command: cmd.as_deref(),
+                },
+            )
+            .await
+        }
+        Command::Daemon => commands::watch::run_daemon(&GlobalConfig::load()?).await,
     }
 }
 
@@ -225,11 +242,34 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn unimplemented_subcommands_report_that() {
-        let cli = Cli::try_parse_from(["artef", "daemon"]).unwrap();
-        let err = run(cli).await.unwrap_err();
-        assert_eq!(err.to_string(), "not yet implemented");
+    #[test]
+    fn watch_takes_an_interval_and_an_optional_command() {
+        let cli = Cli::try_parse_from([
+            "artef",
+            "watch",
+            "status.html",
+            "--every",
+            "5m",
+            "--cmd",
+            "python gen_status.py > status.html",
+        ])
+        .unwrap();
+
+        let Command::Watch { file, every, cmd } = cli.command else {
+            panic!("expected a watch");
+        };
+        assert_eq!(file, PathBuf::from("status.html"));
+        assert_eq!(every, "5m");
+        assert_eq!(cmd.as_deref(), Some("python gen_status.py > status.html"));
+
+        // Neither flag is required: an interval defaults, and a file that is written by
+        // something else is watched without running anything.
+        let cli = Cli::try_parse_from(["artef", "watch", "status.html"]).unwrap();
+        let Command::Watch { every, cmd, .. } = cli.command else {
+            panic!("expected a watch");
+        };
+        assert_eq!(every, "60s");
+        assert_eq!(cmd, None);
     }
 
     #[test]
