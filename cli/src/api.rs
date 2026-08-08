@@ -62,6 +62,18 @@ pub enum PutOutcome {
     Unchanged,
     /// Someone else pushed since the version we based this on.
     Conflict { version: i64 },
+    /// There is no artifact at that id to write to — it was deleted, or it stopped
+    /// being ours (the API answers 404 rather than 403 so it never confirms that
+    /// something exists, spec §2.3).
+    Missing,
+}
+
+/// What `DELETE` found (spec §5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteOutcome {
+    Deleted,
+    /// Nothing there to delete, which is the state the caller wanted anyway.
+    AlreadyGone,
 }
 
 /// The optional fields of an artifact, for create and update.
@@ -222,6 +234,7 @@ impl ApiClient {
 
         match response.status() {
             StatusCode::NOT_MODIFIED => Ok(PutOutcome::Unchanged),
+            StatusCode::NOT_FOUND => Ok(PutOutcome::Missing),
             StatusCode::CONFLICT => Ok(PutOutcome::Conflict {
                 version: version_of(response, "the conflict the server reported").await?,
             }),
@@ -269,8 +282,9 @@ impl ApiClient {
         Ok(page.items)
     }
 
-    /// `DELETE /api/artifacts/:id`.
-    pub async fn delete(&self, id: &str) -> Result<()> {
+    /// `DELETE /api/artifacts/:id`. A 404 is reported, not raised: an artifact that
+    /// is not there is the outcome the caller was asking for.
+    pub async fn delete(&self, id: &str) -> Result<DeleteOutcome> {
         let response = self
             .http
             .delete(self.endpoint(&format!("api/artifacts/{id}"))?)
@@ -279,8 +293,11 @@ impl ApiClient {
             .await
             .with_context(|| format!("reaching {}", self.base))?;
 
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(DeleteOutcome::AlreadyGone);
+        }
         checked(response, "deleting the artifact").await?;
-        Ok(())
+        Ok(DeleteOutcome::Deleted)
     }
 
     /// `PATCH /api/artifacts/:id` — change the name, the visibility, or both.

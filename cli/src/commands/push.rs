@@ -47,7 +47,7 @@ pub async fn run(config: &GlobalConfig, options: &Options<'_>) -> Result<i32> {
     let mut state = State::load(&dir)?;
     let key = state_key(options.file);
 
-    let id = match state.artifacts.get(&key) {
+    let (id, was_tracked) = match state.artifacts.get(&key) {
         Some(entry) => {
             // Both flags describe an artifact being created (spec §7.2). Saying so is
             // better than printing "pushed" and letting the user believe they took.
@@ -57,7 +57,7 @@ pub async fn run(config: &GlobalConfig, options: &Options<'_>) -> Result<i32> {
                      and {key} already has one"
                 );
             }
-            entry.id.clone()
+            (entry.id.clone(), true)
         }
         None => {
             let created = api
@@ -66,7 +66,7 @@ pub async fn run(config: &GlobalConfig, options: &Options<'_>) -> Result<i32> {
             // Saved before the upload: if the `PUT` fails, the next push updates this
             // artifact instead of leaving an empty one behind and making another.
             track(&mut state, &dir, &key, &created.id, "")?;
-            created.id
+            (created.id, false)
         }
     };
     let url = api::share_url(&config.server, &id);
@@ -100,6 +100,18 @@ pub async fn run(config: &GlobalConfig, options: &Options<'_>) -> Result<i32> {
             "someone else updated this artifact (server has v{version}); \
              re-run with --force to overwrite"
         ),
+        // Deliberately not auto-recreated. A 404 is also what the API returns when an
+        // artifact is no longer ours to write to — it never confirms that something
+        // exists (spec §2.3) — so creating a replacement would silently fork a document
+        // other people are still reading, under a new id nobody has been given.
+        PutOutcome::Missing if was_tracked => bail!(
+            "the artifact {id} tracked for {key} is not on the server any more \
+             (it was deleted, or it is no longer yours to write to); \
+             run `artef rm {key}` to forget it, then push again to make a new one"
+        ),
+        PutOutcome::Missing => {
+            bail!("the server lost artifact {id} between creating it and uploading to it")
+        }
     }
 }
 

@@ -153,6 +153,36 @@ async fn rm_deletes_the_artifact_and_forgets_it_locally() {
 }
 
 #[tokio::test]
+async fn rm_of_an_artifact_the_server_no_longer_has_still_forgets_it() {
+    let server = MockServer::start().await;
+    let cli = Cli::new();
+    cli.write_state("status.html", ID, "abc");
+
+    Mock::given(method("DELETE"))
+        .and(path(format!("/api/artifacts/{ID}")))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let run = cli.run(&server, &["rm", "status.html"]);
+
+    // Deleting something that is already deleted is what the user asked for, and it
+    // is the only way to clear a stale entry without hand-editing .artef.json.
+    run.ok();
+    assert!(
+        run.stdout.contains("already gone") && run.stdout.contains(".artef.json"),
+        "stdout was {:?}",
+        run.stdout
+    );
+    assert_eq!(
+        cli.state()["artifacts"].as_object().map(|m| m.len()),
+        Some(0),
+        "state was {}",
+        cli.state()
+    );
+}
+
+#[tokio::test]
 async fn share_public_patches_the_visibility() {
     let server = MockServer::start().await;
     let cli = Cli::new();

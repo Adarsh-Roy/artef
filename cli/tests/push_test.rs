@@ -270,6 +270,32 @@ async fn flags_that_only_apply_at_creation_say_so_instead_of_being_dropped() {
 }
 
 #[tokio::test]
+async fn a_push_to_an_id_the_server_no_longer_has_says_how_to_recover() {
+    let server = MockServer::start().await;
+    let cli = Cli::new();
+    cli.write("status.html", DOC);
+    cli.write_state("status.html", ID, &sha256_hex("<h1>old</h1>"));
+
+    mock_head(&server, ID, &sha256_hex("<h1>old</h1>"), 3).await;
+    wiremock::Mock::given(wiremock::matchers::method("PUT"))
+        .respond_with(wiremock::ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let run = cli.run(&server, &["push", "status.html"]);
+
+    run.failed();
+    assert!(
+        run.stderr.contains("artef rm status.html"),
+        "the error has to name the way out; stderr was:\n{}",
+        run.stderr
+    );
+    // The tracked id is left alone: only `artef rm` forgets it, and the user has to
+    // decide, because a 404 can also mean the artifact is someone else's now.
+    assert_eq!(cli.state()["artifacts"]["status.html"]["id"], ID);
+}
+
+#[tokio::test]
 async fn a_push_without_a_token_says_how_to_get_one() {
     let server = MockServer::start().await;
     let cli = Cli::new();
