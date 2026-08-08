@@ -39,10 +39,15 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   app.use('*', sessionMiddleware(deps))
+  // Scoped to /api because that is where the spec draws the bearer line (§5),
+  // and a dead token must not shut a caller out of everything else: /_health has
+  // to answer for the database alone (§10), and /auth/* is where a client whose
+  // token just died goes to get a new one.
+  //
   // Order is load-bearing: bearer runs after the session so a token wins over a
   // stray cookie, and before the origin check so `authKind` is already 'bearer'
   // when that check decides whether an Origin header is required.
-  app.use('*', bearerMiddleware(deps))
+  app.use('/api/*', bearerMiddleware(deps))
   // Mounted before any route so it also covers /api paths that do not exist
   // yet — a state-changing request must never reach a handler unchecked.
   app.use('/api/*', originCheck(deps.cfg))

@@ -20,6 +20,8 @@ function addProbes(app: Hono<AppEnv>): Hono<AppEnv> {
     }),
   )
   app.post('/api/probe', c => c.json({ authKind: c.get('authKind') }))
+  // Outside /api, where the bearer middleware does not run.
+  app.get('/probe', c => c.json({ user: c.get('user'), authKind: c.get('authKind') }))
   return app
 }
 
@@ -141,6 +143,37 @@ describe('bearer middleware', () => {
   it('rejects a bad token before the origin check can pass it through', async () => {
     const res = await post('/api/probe', { Authorization: 'Bearer art_live_nope' })
     expect(res.status).toBe(401)
+  })
+
+  // The spec puts bearer auth on /api and nowhere else (§5). A dead token is a
+  // reason to refuse an API call, not a reason to lock the caller out of the
+  // routes they need in order to get a live one.
+  describe('scoped to /api', () => {
+    it('leaves /_health answering for the database alone', async () => {
+      const res = await get('/_health', { Authorization: 'Bearer art_live_garbage' })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ ok: true })
+    })
+
+    it('still lets a client with a dead token reach the sign-in routes', async () => {
+      const res = await get('/auth/logout', { Authorization: 'Bearer art_live_garbage' })
+      expect(res.status).toBe(302)
+    })
+
+    it('does not authenticate a request outside /api, even with a good token', async () => {
+      const { user } = await makeUser(deps)
+      const { header } = await makeMachineToken(deps, user.id)
+
+      const res = await get('/probe', header)
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ user: null, authKind: null })
+    })
+
+    it('still refuses a bad token on an /api route', async () => {
+      const res = await get('/api/probe', { Authorization: 'Bearer art_live_garbage' })
+      expect(res.status).toBe(401)
+      expect(await res.json()).toEqual({ error: 'invalid token' })
+    })
   })
 
   describe('last_used_at', () => {
