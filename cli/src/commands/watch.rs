@@ -19,7 +19,7 @@ use tokio::task::JoinSet;
 
 use crate::api::{ApiClient, PutOutcome};
 use crate::commands::lint::format_violation;
-use crate::commands::push::{apply_asset_extraction, gzip, sha256_hex};
+use crate::commands::push::{apply_asset_extraction, gzip, sha256_hex, upload_assets};
 use crate::commands::{state_key, track};
 use crate::config::GlobalConfig;
 use crate::interval::parse_interval;
@@ -160,7 +160,7 @@ pub async fn run_tick(
         });
     }
 
-    let html = apply_asset_extraction(&html, api, false).await?;
+    let (html, assets) = apply_asset_extraction(&html, false)?;
     let sha = sha256_hex(html.as_bytes());
     let gz = gzip(html.as_bytes())?;
 
@@ -182,7 +182,9 @@ pub async fn run_tick(
     };
 
     // Ask before uploading: an unchanged dashboard costs one small round trip a minute
-    // instead of a megabyte (spec §5.2 hash-first push).
+    // instead of a megabyte (spec §5.2 hash-first push). The extracted images wait
+    // behind this check too, so a chart that has not changed is not re-shipped 1,440
+    // times a day (spec §6).
     if api
         .head_content(&id)
         .await?
@@ -192,6 +194,8 @@ pub async fn run_tick(
         log(&entry.file, "unchanged", json!({ "id": id }));
         return Ok(TickOutcome::Unchanged);
     }
+
+    upload_assets(api, &assets).await?;
 
     // No X-Base-Version. The daemon owns this artifact, so the newest render wins
     // rather than a version number racing itself into a conflict (spec §5.2).
@@ -733,11 +737,54 @@ command = "./scripts/build_report.sh"
             .unwrap();
 
         assert_eq!(outcome, TickOutcome::Pushed { version: 4 });
+        // Ask first, then the image, then the document that names it.
+        assert_eq!(
+            calls(&server).await,
+            vec![
+                ("HEAD".to_string(), content_path()),
+                ("POST".to_string(), "/api/assets".to_string()),
+                ("PUT".to_string(), content_path()),
+            ]
+        );
         let pushed = gunzip(&only_request(&server, "PUT").await.body);
         assert_eq!(pushed, format!(r#"<img src="/assets/{sha}">"#));
         assert_eq!(
             state_of(dir.path(), "out.html")["hash"],
             sha256_hex(pushed.as_bytes())
+        );
+    }
+
+    /// The one that costs real money: a dashboard on a 60s timer whose chart has not
+    /// changed must not re-`POST` the chart 1,440 times a day (spec §6).
+    #[tokio::test]
+    async fn a_tick_that_changed_nothing_does_not_re_ship_its_images() {
+        let server = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let bytes: Vec<u8> = (0..20 * 1024).map(|i| (i % 251) as u8).collect();
+        let sha = sha256_hex(&bytes);
+        std::fs::write(
+            dir.path().join("out.html"),
+            format!(
+                r#"<img src="data:image/png;base64,{}">"#,
+                base64::engine::general_purpose::STANDARD.encode(&bytes)
+            ),
+        )
+        .unwrap();
+        already_tracked(dir.path(), "out.html");
+        // The server already holds the extracted document. Neither /api/assets nor PUT
+        // is mounted, so either call would fail the tick as well as the assertion.
+        let extracted = format!(r#"<img src="/assets/{sha}">"#);
+        mock_head(&server, &sha256_hex(extracted.as_bytes()), 9).await;
+
+        let outcome = run_tick(&client(&server), dir.path(), &entry("out.html", None))
+            .await
+            .unwrap();
+
+        assert_eq!(outcome, TickOutcome::Unchanged);
+        assert_eq!(
+            calls(&server).await,
+            vec![("HEAD".to_string(), content_path())],
+            "an unchanged tick must not re-upload its assets"
         );
     }
 

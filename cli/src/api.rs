@@ -363,7 +363,13 @@ impl ApiClient {
     }
 
     /// `POST /api/assets` — store one extracted image and get back its path (spec §5.4).
-    pub async fn upload_asset(&self, bytes: &[u8], media_type: &str) -> Result<String> {
+    ///
+    /// A 409 is success, not a failure. The endpoint is content-addressed, so a conflict
+    /// means the server already holds these exact bytes under the name we would have
+    /// given them — spec §6 says so outright. Servers that answer a duplicate with the
+    /// same body a 201 carries hand back that path; ones that answer with nothing
+    /// readable give `None`, which is a stored asset with no path to check.
+    pub async fn upload_asset(&self, bytes: &[u8], media_type: &str) -> Result<Option<String>> {
         let part = multipart::Part::bytes(bytes.to_vec())
             .file_name("asset")
             .mime_str(media_type)
@@ -378,12 +384,20 @@ impl ApiClient {
             .await
             .with_context(|| format!("reaching {}", self.base))?;
 
+        if response.status() == StatusCode::CONFLICT {
+            return Ok(response
+                .json::<UploadedAsset>()
+                .await
+                .ok()
+                .map(|asset| asset.url));
+        }
+
         let asset: UploadedAsset = checked(response, "uploading an asset")
             .await?
             .json()
             .await
             .context("reading the uploaded asset")?;
-        Ok(asset.url)
+        Ok(Some(asset.url))
     }
 }
 
@@ -543,7 +557,7 @@ mod tests {
         let client = ApiClient::new(&server.uri(), "art_live_x").unwrap();
         let url = client.upload_asset(b"png", "image/png").await.unwrap();
 
-        assert_eq!(url, "/assets/ab12");
+        assert_eq!(url.as_deref(), Some("/assets/ab12"));
         let request = &server.received_requests().await.unwrap()[0];
         let content_type = request
             .headers
@@ -559,5 +573,43 @@ mod tests {
         assert!(body.contains("name=\"file\""), "body was {body}");
         assert!(body.contains("image/png"), "body was {body}");
         assert!(body.contains("png"), "body was {body}");
+    }
+
+    /// Spec §6: "409 on duplicate is fine — it's content-addressed." The bytes are on
+    /// the server either way, which is all the caller wanted.
+    #[tokio::test]
+    async fn a_duplicate_asset_is_stored_not_failed() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/assets"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "sha256": "ab12",
+                "url": "/assets/ab12",
+                "byte_size": 3,
+            })))
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::new(&server.uri(), "art_live_x").unwrap();
+        let url = client.upload_asset(b"png", "image/png").await.unwrap();
+
+        assert_eq!(url.as_deref(), Some("/assets/ab12"));
+    }
+
+    /// A duplicate that says nothing readable is still a duplicate.
+    #[tokio::test]
+    async fn a_duplicate_that_answers_with_no_body_is_still_stored() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/assets"))
+            .respond_with(ResponseTemplate::new(409))
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::new(&server.uri(), "art_live_x").unwrap();
+        assert_eq!(
+            client.upload_asset(b"png", "image/png").await.unwrap(),
+            None
+        );
     }
 }

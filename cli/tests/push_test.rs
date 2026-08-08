@@ -344,13 +344,13 @@ async fn a_large_inline_image_is_uploaded_once_and_the_document_points_at_it() {
 
     run.ok();
 
-    // The image goes up before the document that names it, so the document is never
-    // live pointing at an asset the server does not have yet.
+    // Ask what the server has first, then send the image, then the document that names
+    // it — so the document is never live pointing at an asset the server does not have.
     assert_eq!(
         calls(&server).await,
         vec![
-            ("POST".to_string(), "/api/assets".to_string()),
             ("HEAD".to_string(), format!("/api/artifacts/{ID}/content")),
+            ("POST".to_string(), "/api/assets".to_string()),
             ("PUT".to_string(), format!("/api/artifacts/{ID}/content")),
         ]
     );
@@ -378,6 +378,70 @@ async fn a_large_inline_image_is_uploaded_once_and_the_document_points_at_it() {
     assert_eq!(
         cli.state()["artifacts"]["report.html"]["hash"],
         sha256_hex(&pushed)
+    );
+}
+
+/// Spec §6: the point of extraction is that a document refreshing on a timer stops
+/// re-shipping the same logo. Assets wait behind the `HEAD` for exactly that reason.
+#[tokio::test]
+async fn a_document_the_server_already_has_does_not_re_ship_its_images() {
+    let server = MockServer::start().await;
+    let cli = Cli::new();
+    let bytes = chart_png();
+    let sha = sha256_hex_bytes(&bytes);
+    cli.write("report.html", &doc_with_chart(&bytes));
+    cli.write_state("report.html", ID, "");
+
+    // The server already holds the extracted document, so there is nothing to push and
+    // nothing to upload. Neither /api/assets nor PUT is mounted: either call would 404
+    // and fail the run as well as the assertion below.
+    let extracted =
+        format!(r#"<!doctype html><html><body><h1>Q3</h1><img src="/assets/{sha}"></body></html>"#);
+    mock_head(&server, ID, &sha256_hex(&extracted), 7).await;
+
+    let run = cli.run(&server, &["push", "report.html"]);
+
+    run.ok();
+    assert_eq!(run.stdout, format!("unchanged  {}/{ID}\n", server.uri()));
+    assert_eq!(
+        calls(&server).await,
+        vec![("HEAD".to_string(), format!("/api/artifacts/{ID}/content"))],
+        "an unchanged document must not re-upload its assets"
+    );
+}
+
+/// Spec §6 step 2: "409 on duplicate is fine — it's content-addressed."
+#[tokio::test]
+async fn an_asset_the_server_already_had_does_not_fail_the_push() {
+    let server = MockServer::start().await;
+    let cli = Cli::new();
+    let bytes = chart_png();
+    let sha = sha256_hex_bytes(&bytes);
+    cli.write("report.html", &doc_with_chart(&bytes));
+    cli.write_state("report.html", ID, "");
+
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/assets"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "sha256": sha,
+                "url": format!("/assets/{sha}"),
+                "byte_size": bytes.len(),
+            })),
+        )
+        .mount(&server)
+        .await;
+    mock_head(&server, ID, &sha256_hex("<h1>old</h1>"), 1).await;
+    mock_put(&server, ID, 2).await;
+
+    let run = cli.run(&server, &["push", "report.html"]);
+
+    run.ok();
+    assert_eq!(run.stdout, format!("pushed v2  {}/{ID}\n", server.uri()));
+    let pushed = gunzip(&only_request(&server, "PUT").await.body);
+    assert!(
+        pushed.contains(&format!("/assets/{sha}")),
+        "pushed:\n{pushed}"
     );
 }
 
@@ -430,11 +494,15 @@ async fn an_asset_upload_that_fails_stops_the_push_with_the_servers_reason() {
         "stderr was:\n{}",
         run.stderr
     );
-    // Nothing was uploaded: a document naming an asset the server rejected would
+    // The document was never uploaded: one naming an asset the server rejected would
     // render with a broken image.
     assert_eq!(
         calls(&server).await,
-        vec![("POST".to_string(), "/api/assets".to_string())]
+        vec![
+            ("HEAD".to_string(), format!("/api/artifacts/{ID}/content")),
+            ("POST".to_string(), "/api/assets".to_string()),
+        ],
+        "a failed asset upload must stop the push before the PUT"
     );
 }
 
