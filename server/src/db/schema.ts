@@ -70,6 +70,26 @@ export const assets = pgTable('assets', {
   index('assets_sha256_idx').on(t.sha256),
 ])
 
+/**
+ * One-time codes for the `artef login` browser flow (spec §7.2). The browser is
+ * redirected to the CLI's loopback listener carrying a code, not a token, so no
+ * long-lived credential ever lands in browser history, a referrer header or a
+ * proxy log. The row holds the minted token in plaintext for the sixty seconds
+ * between approval and collection — the only window in which it exists outside
+ * the CLI — and the `machine_tokens` row is not written until the exchange, so
+ * an approval nobody collected leaves no usable credential behind.
+ */
+export const cliAuthCodes = pgTable('cli_auth_codes', {
+  codeHash: bytea('code_hash').primaryKey(),
+  token: text('token').notNull(),
+  name: text('name').notNull(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  prefix: text('prefix').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true, precision: 3 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
+})
+
 export const machineTokens = pgTable('machine_tokens', {
   id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),

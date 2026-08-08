@@ -43,6 +43,36 @@ export const ASSET_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'
 export const SHELL_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'self'"
 
+/**
+ * The `artef login` pages (§7.2). These have no script and no images — a
+ * heading, a form and a link — so everything is denied and only the inline
+ * `<style>` and the form's own target are allowed back.
+ *
+ * `frame-ancestors 'none'` is stricter than the shell page's `'self'`, and for
+ * the same reason it exists there: a click on this page's button hands out a
+ * machine token that lives until someone revokes it. Nothing in this app frames
+ * these pages, so nothing may.
+ */
+export const CLI_AUTH_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+
+/**
+ * `/cli/auth`, `/cli/auth/manual` and the response to approving. The manual
+ * page carries a plaintext machine token in its body, so `no-store` is not
+ * hygiene here — it is what keeps the credential off the disk of a shared
+ * machine. `no-referrer` covers the redirect to the loopback as well: the
+ * callback URL holds the one-time code, and the listener has no business being
+ * told which server the person just signed in to.
+ */
+export function cliAuthPageHeaders(): Record<string, string> {
+  return {
+    'Content-Security-Policy': CLI_AUTH_CSP,
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'private, no-store',
+  }
+}
+
 /** `/c/:id` — the artifact itself, framed by the shell page. */
 export function artifactPageHeaders(): Record<string, string> {
   return {

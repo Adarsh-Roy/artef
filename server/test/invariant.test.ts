@@ -261,6 +261,7 @@ describe('the whole route table', () => {
     'ALL /api/artifacts/:id',
     'ALL /api/artifacts/:id/*',
     'ALL /auth/logout',
+    'ALL /cli/auth/approve',
     'DELETE /api/artifacts/:id',
     'DELETE /api/artifacts/:id/grants/:user_id',
     'DELETE /api/tokens/:id',
@@ -280,6 +281,11 @@ describe('the whole route table', () => {
     'GET /auth/login',
     'GET /auth/logout',
     'GET /c/:id',
+    // The `artef login` flow (§7.2). Server-rendered pages and a JSON exchange;
+    // nothing here serves user bytes, so none of it belongs in the byte-route
+    // list above.
+    'GET /cli/auth',
+    'GET /cli/auth/manual',
     'HEAD /api/artifacts/:id/content',
     'PATCH /api/artifacts/:id',
     'POST /api/artifacts',
@@ -287,6 +293,8 @@ describe('the whole route table', () => {
     'POST /api/assets',
     'POST /api/tokens',
     'POST /auth/logout',
+    'POST /cli/auth/approve',
+    'POST /cli/auth/exchange',
     'PUT /api/artifacts/:id/content',
   ]
 

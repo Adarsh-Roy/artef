@@ -15,6 +15,7 @@ import { sessionMiddleware } from './auth/session.js'
 import type { Notifier } from './notify.js'
 import { registerArtifactRoutes } from './routes/artifacts.js'
 import { registerAssetRoutes } from './routes/assets.js'
+import { registerCliAuthRoutes } from './routes/cliauth.js'
 import { registerContentRoutes } from './routes/content.js'
 import { registerEventRoutes } from './routes/events.js'
 import { registerGrantRoutes } from './routes/grants.js'
@@ -81,6 +82,9 @@ export function createApp(deps: Deps): Hono<AppEnv> {
 
   registerAuthRoutes(app, deps)
   registerTokenRoutes(app, deps)
+  // The other way to get a machine token (§7.2): a browser flow instead of an
+  // API call, because the CLI has no credential yet and is the thing asking.
+  registerCliAuthRoutes(app, deps)
   // After the artifact routes, which is what puts the content endpoints behind
   // the `/api/artifacts/:id/*` token-scope middleware registered there — hono
   // runs middleware in registration order, so a route registered first would

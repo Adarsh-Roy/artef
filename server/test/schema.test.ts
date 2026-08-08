@@ -7,7 +7,7 @@ describe('schema', () => {
     await runMigrations(pool)
     const r = await pool.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public'`)
     const names = r.rows.map((x: any) => x.table_name)
-    for (const t of ['workspaces','users','artifacts','artifact_grants','artifact_versions','assets','machine_tokens'])
+    for (const t of ['workspaces','users','artifacts','artifact_grants','artifact_versions','assets','machine_tokens','cli_auth_codes'])
       expect(names).toContain(t)
     // Postgres reports extension base types as data_type 'USER-DEFINED'; the
     // actual type name is in udt_name.
