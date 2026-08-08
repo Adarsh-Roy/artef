@@ -260,6 +260,28 @@ describe('PUT /api/artifacts/:id/content', () => {
     expect((await stored(art.id)).version).toBe(0)
   })
 
+  it('refuses a PUT whose Content-Length exceeds the cap before reading the body', async () => {
+    const small = await testDeps({ maxArtifactBytes: 64 })
+    const { user } = await makeUser(small)
+    const art = await makeArtifact(user)
+    const { header } = await makeMachineToken(small, user.id)
+
+    // Larger than the cap and deliberately not valid gzip. Without the
+    // Content-Length pre-check the server would buffer it and answer 400 (bad
+    // gzip); the pre-check refuses it as 413 before the body is read at all.
+    // In production the HTTP layer supplies Content-Length from the wire; the
+    // in-process test client only carries it when set explicitly.
+    const body = new Uint8Array(Buffer.alloc(200, 1))
+    const res = await small.app.request(contentPath(art.id), {
+      method: 'PUT',
+      headers: { ...header, 'Content-Encoding': 'gzip', 'Content-Length': String(body.length) },
+      body,
+    })
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ error: expect.any(String), max_bytes: 64 })
+    expect((await stored(art.id)).version).toBe(0)
+  })
+
   it('lets a user with an editor grant push', async () => {
     const { art } = await ownedArtifact({ visibility: 'restricted' })
     const other = await makeUser(deps)

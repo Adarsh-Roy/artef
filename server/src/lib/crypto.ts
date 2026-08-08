@@ -37,10 +37,16 @@ function sigMatches(expected: string, given: string): boolean {
   return timingSafeEqualBuf(Buffer.from(expected), Buffer.from(given))
 }
 
-/** Session cookie value: `b64url(json) + "." + b64url(HMAC-SHA256(secret, b64url(json)))`. */
+// Domain-separation prefix for the session HMAC. SECRET_KEY also signs content
+// tokens and machine tokens, so every distinct HMAC use of it must carry its own
+// prefix — otherwise a signature minted for one purpose could be replayed as
+// another. Invariant: any future HMAC over SECRET_KEY gets a distinct prefix.
+const SESSION_SIG_PREFIX = 'session:'
+
+/** Session cookie value: `b64url(json) + "." + b64url(HMAC-SHA256(secret, "session:" + b64url(json)))`. */
 export function signSession(payload: { uid: string; exp: number }, secret: string): string {
   const jsonB64 = Buffer.from(JSON.stringify(payload)).toString('base64url')
-  return `${jsonB64}.${hmacB64url(secret, jsonB64)}`
+  return `${jsonB64}.${hmacB64url(secret, SESSION_SIG_PREFIX + jsonB64)}`
 }
 
 /** Returns the user id for a well-signed, unexpired cookie; `null` for anything else. */
@@ -48,7 +54,7 @@ export function verifySession(value: string, secret: string): { uid: string } | 
   const parts = value.split('.')
   if (parts.length !== 2) return null
   const [jsonB64, sig] = parts
-  if (!sigMatches(hmacB64url(secret, jsonB64), sig)) return null
+  if (!sigMatches(hmacB64url(secret, SESSION_SIG_PREFIX + jsonB64), sig)) return null
 
   let payload: unknown
   try {

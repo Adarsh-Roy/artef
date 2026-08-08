@@ -30,4 +30,33 @@ describe('loadConfig', () => {
     const c = loadConfig({ ...base, WORKSPACE_DOMAIN_MAP: 'a.com=example.com, b.com=example.com' } as any)
     expect(c.workspaceDomainMap).toEqual({ 'a.com': 'example.com', 'b.com': 'example.com' })
   })
+  // Hardening A1 (spec §4.3 "refuse at startup"): the map is made safe by
+  // construction, so no call site has to remember to re-check the blocklist.
+  it('refuses a WORKSPACE_DOMAIN_MAP key that is a consumer domain', () => {
+    expect(() => loadConfig({ ...base, WORKSPACE_DOMAIN_MAP: 'gmail.com=company.com' } as any))
+      .toThrow(/gmail\.com/)
+  })
+  it('refuses a WORKSPACE_DOMAIN_MAP target that is not an allowed domain', () => {
+    expect(() => loadConfig({ ...base, WORKSPACE_DOMAIN_MAP: 'a.com=not-allowed.com' } as any))
+      .toThrow(ConfigError)
+  })
+  // Hardening A2: a partially configured provider is a deployment mistake, not
+  // an intent to disable it, so it is refused rather than silently dropped.
+  it('refuses a half-configured Google provider even when OIDC is complete', () => {
+    expect(() => loadConfig({
+      ...base,
+      GOOGLE_CLIENT_SECRET: undefined,
+      OIDC_ISSUER_URL: 'https://idp.example.com',
+      OIDC_CLIENT_ID: 'oidc-id',
+      OIDC_CLIENT_SECRET: 'oidc-secret',
+    } as any)).toThrow(ConfigError)
+  })
+  it('refuses a partially configured OIDC provider even when Google is complete', () => {
+    expect(() => loadConfig({
+      ...base,
+      OIDC_ISSUER_URL: 'https://idp.example.com',
+      OIDC_CLIENT_ID: 'oidc-id',
+      // OIDC_CLIENT_SECRET intentionally absent — the triple is incomplete.
+    } as any)).toThrow(ConfigError)
+  })
 })

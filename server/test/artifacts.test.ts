@@ -574,6 +574,9 @@ describe('GET /api/artifacts', () => {
       '2024-01-01T00:00:00Z',
       '2024-02-31T00:00:00.000Z',
       '2024-13-45T99:99:99.999Z',
+      // Year 0000 passes `^\d{4}` and round-trips through JS Date, but Postgres
+      // has no year zero and raises on the `::timestamptz` cast — a 400, not a 500.
+      '0000-01-01T00:00:00.000Z',
       "2024-01-01T00:00:00.000Z'); DROP TABLE artifacts; --",
     ]
 

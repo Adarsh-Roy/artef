@@ -29,6 +29,10 @@ before. One DNS record, one OAuth client, a handful of env vars, `docker compose
 Caddy fetches and renews the TLS certificate automatically. There is no second
 domain, no wildcard certificate, and no reverse-proxy sidecar to understand.
 
+Serve artef at the **root** of its domain (`https://artef.company.com/`, not
+`https://host/artef`) in v1: asset URLs (`/assets/…`) and short links (`/a/…`)
+are root-relative.
+
 ## CLI quickstart
 
 ```bash

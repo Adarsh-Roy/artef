@@ -46,6 +46,11 @@ const ALLOWED_MEDIA_TYPES = new Set([
   'font/woff2',
 ])
 
+/** Headroom over MAX_ARTIFACT_BYTES for the multipart framing (boundaries, part
+ *  headers) that Content-Length counts but the stored file does not, so the
+ *  pre-check never refuses a file of exactly the maximum size. */
+const MULTIPART_SLACK_BYTES = 1024 * 1024
+
 export function registerAssetRoutes(app: Hono<AppEnv>, deps: Deps): void {
   // Session or bearer, and no scope check: a token scoped to one artifact is
   // still pushing a document whose images have to go somewhere, and an asset
@@ -53,6 +58,16 @@ export function registerAssetRoutes(app: Hono<AppEnv>, deps: Deps): void {
   app.post('/api/assets', async c => {
     const user = c.get('user')
     if (user === null) return c.json({ error: 'unauthorized' }, 401)
+
+    // Defense-in-depth before buffering the multipart body: a declared size past
+    // the cap plus the framing slack cannot hold an under-cap file, so reject it
+    // on Content-Length without parsing. The header can be absent (a chunked
+    // upload sends none), so Caddy's request_body max_size is the real backstop;
+    // the file.size check below stays the authority on the stored bytes.
+    const declaredBytes = Number(c.req.header('content-length'))
+    if (Number.isFinite(declaredBytes) && declaredBytes > deps.cfg.maxArtifactBytes + MULTIPART_SLACK_BYTES) {
+      return tooLarge(c, deps)
+    }
 
     let form: FormData
     try {

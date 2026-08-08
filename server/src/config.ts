@@ -43,10 +43,12 @@ function parseBoolean(env: NodeJS.ProcessEnv, name: string, fallback: boolean): 
 }
 
 // 'a.com=example.com, b.com=example.com' -> { 'a.com': 'example.com', 'b.com': 'example.com' }
+// Entries are lowercased, because email domains are case-insensitive and the
+// blocklist and allowlist this map is validated against are both lowercase.
 function parseDomainMap(raw?: string): Record<string, string> {
   const map: Record<string, string> = {}
   for (const entry of splitCsv(raw)) {
-    const [from, to, ...rest] = entry.split('=').map(s => s.trim())
+    const [from, to, ...rest] = entry.split('=').map(s => s.trim().toLowerCase())
     if (!from || !to || rest.length > 0) {
       throw new ConfigError(`INVALID WORKSPACE_DOMAIN_MAP entry '${entry}': expected 'from.com=to.com'`)
     }
@@ -87,11 +89,47 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     throw new ConfigError(`INVALID LINK_PREVIEW: expected 'name' or 'none', got '${linkPreview}'`)
   }
 
+  // Spec §4.3: the map has to be safe by construction, so it is validated once
+  // here rather than re-checked at every call site. A key that is a consumer
+  // domain would let anyone with a free account at that provider map into a
+  // workspace; a target that is not an allowed domain maps into a workspace no
+  // one can ever join. The key check runs first, so a bad key is named as such.
+  const workspaceDomainMap = parseDomainMap(env.WORKSPACE_DOMAIN_MAP)
+  for (const key of Object.keys(workspaceDomainMap)) {
+    if (CONSUMER_DOMAINS.has(key)) {
+      throw new ConfigError(
+        `INVALID WORKSPACE_DOMAIN_MAP: '${key}' is a consumer email domain and cannot map into a workspace`,
+      )
+    }
+  }
+  for (const target of Object.values(workspaceDomainMap)) {
+    if (!allowedDomains.includes(target)) {
+      throw new ConfigError(
+        `INVALID WORKSPACE_DOMAIN_MAP: target '${target}' is not in ALLOWED_DOMAINS`,
+      )
+    }
+  }
+
   const googleClientId = optional(env, 'GOOGLE_CLIENT_ID')
   const googleClientSecret = optional(env, 'GOOGLE_CLIENT_SECRET')
   const oidcIssuerUrl = optional(env, 'OIDC_ISSUER_URL')
   const oidcClientId = optional(env, 'OIDC_CLIENT_ID')
   const oidcClientSecret = optional(env, 'OIDC_CLIENT_SECRET')
+
+  // A partly configured provider is a deployment mistake, not an intent to
+  // disable it, so it is refused outright rather than silently dropped just
+  // because some other provider happens to be complete.
+  if (Boolean(googleClientId) !== Boolean(googleClientSecret)) {
+    throw new ConfigError(
+      'INCOMPLETE Google auth: set both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or neither',
+    )
+  }
+  const oidcSet = [oidcIssuerUrl, oidcClientId, oidcClientSecret].filter(Boolean).length
+  if (oidcSet !== 0 && oidcSet !== 3) {
+    throw new ConfigError(
+      'INCOMPLETE OIDC auth: set OIDC_ISSUER_URL, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET together, or none',
+    )
+  }
 
   const hasGoogle = Boolean(googleClientId && googleClientSecret)
   const hasOidc = Boolean(oidcIssuerUrl && oidcClientId && oidcClientSecret)
@@ -116,7 +154,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     oidcClientId,
     oidcClientSecret,
     oidcDisplayName: optional(env, 'OIDC_DISPLAY_NAME'),
-    workspaceDomainMap: parseDomainMap(env.WORKSPACE_DOMAIN_MAP),
+    workspaceDomainMap,
     forceHttps: parseBoolean(env, 'FORCE_HTTPS', true),
     port: parsePositiveInt(env, 'PORT', 3000),
   }

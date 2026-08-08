@@ -300,8 +300,11 @@ interface Cursor {
 
 /** Exactly what `Date.prototype.toISOString` produces — UTC, three fractional
  *  digits — and so exactly what `encodeCursor` mints. A cursor is our own opaque
- *  token, so any other shape is a forgery or a bug, never something to guess at. */
-const ISO_MS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+ *  token, so any other shape is a forgery or a bug, never something to guess at.
+ *  Year 0000 is excluded: JS Date parses and round-trips it, but Postgres has no
+ *  year zero and raises on the `::timestamptz` cast, which would turn a crafted
+ *  cursor into a 500 instead of the 400 an invalid cursor deserves. */
+const ISO_MS_RE = /^(?!0000)\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 /**
  * Keyset pagination, not OFFSET: the page after this one is defined by the row

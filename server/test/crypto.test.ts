@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { createHmac } from 'node:crypto'
 import {
   sha256, sha256Hex, signSession, verifySession,
   mintContentToken, verifyContentToken, generateMachineToken, hashToken,
@@ -66,6 +67,14 @@ describe('signSession / verifySession', () => {
     expect(verifySession('nodot', secret)).toBeNull()
     expect(verifySession('a.b.c', secret)).toBeNull()
     expect(verifySession('!!!.!!!', secret)).toBeNull()
+  })
+  // Hardening A3: the signature covers a domain-separation prefix, so a cookie
+  // signed the old way — over the bare payload — must no longer verify.
+  it('signs under a domain-separation prefix, so a bare-payload signature fails', () => {
+    const v = signSession({ uid: 'user-1', exp: nowSecs() + 3600 }, secret)
+    const jsonB64 = v.split('.')[0]
+    const bare = createHmac('sha256', secret).update(jsonB64).digest('base64url')
+    expect(verifySession(`${jsonB64}.${bare}`, secret)).toBeNull()
   })
 })
 

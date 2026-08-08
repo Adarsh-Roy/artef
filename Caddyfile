@@ -1,5 +1,12 @@
 # Automatic HTTPS for one host. Caddy fetches and renews the certificate on its
 # own, so setup needs one DNS A record and no manual certificate step.
 {$DOMAIN} {
+	# Hard backstop on request size. 32MB comfortably clears the default
+	# MAX_ARTIFACT_BYTES (10MB uncompressed) for both gzipped-content PUTs and
+	# multipart asset uploads. Operators who raise MAX_ARTIFACT_BYTES should
+	# raise this too.
+	request_body {
+		max_size 32MB
+	}
 	reverse_proxy app:3000
 }

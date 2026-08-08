@@ -252,6 +252,31 @@ describe('POST /api/assets', () => {
     expect(await res.json()).toEqual({ error: expect.any(String) })
     expect(await rows()).toHaveLength(0)
   })
+
+  it('refuses a POST whose Content-Length exceeds the cap before parsing the body', async () => {
+    const small = await testDeps({ maxArtifactBytes: 64 })
+    const { user } = await makeUser(small)
+    const { header } = await makeMachineToken(small, user.id)
+
+    // Past the cap plus the multipart slack, and not multipart at all. Without
+    // the Content-Length pre-check formData() would throw and answer 400; the
+    // pre-check refuses it as 413 before the body is parsed. In production the
+    // HTTP layer supplies Content-Length from the wire; the in-process test
+    // client only carries it when set explicitly.
+    const body = new Uint8Array(Buffer.alloc(1024 * 1024 + 200, 1))
+    const res = await small.app.request('/api/assets', {
+      method: 'POST',
+      headers: {
+        ...header,
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(body.length),
+      },
+      body,
+    })
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ error: expect.any(String), max_bytes: 64 })
+    expect(await rows()).toHaveLength(0)
+  })
 })
 
 // --- serving -----------------------------------------------------------------

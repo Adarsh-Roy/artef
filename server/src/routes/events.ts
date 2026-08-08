@@ -8,9 +8,11 @@
 // reconnects by itself when a proxy times it out. And it fans out from
 // Postgres `LISTEN`/`NOTIFY` (src/notify.ts) rather than from a broker, so a
 // stream costs a map entry rather than a connection.
+import { eq } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import type { Hono } from 'hono'
 import type { AppEnv, Deps } from '../app.js'
+import { artifacts } from '../db/schema.js'
 import { can } from '../lib/acl.js'
 import { getArtifactWithGrant } from './artifacts.js'
 
@@ -75,16 +77,27 @@ export function registerEventRoutes(app: Hono<AppEnv>, deps: Deps): void {
       stream.onAbort(done)
       c.req.raw.signal?.addEventListener('abort', done, { once: true })
 
-      // The current state — written *after* the subscription is live. A push
-      // that lands between the two is then delivered as an `updated` rather
-      // than falling into the gap between "read the version" and "start
-      // listening", and the shell ignores an update it has already seen, so an
-      // `updated` that arrives before or repeats the `hello` costs nothing.
-      // A browser that reconnects a second after a push needs this to catch up
-      // at all (§5.5).
+      // The current state — read fresh from the DB *after* the subscription is
+      // live, never the version captured before subscribing. That closes the
+      // gap in both directions: a push committed before this read is reflected
+      // in the hello, and a push committed after it is delivered as an `updated`
+      // by the subscription above. The version read at the top of the handler
+      // is stale by the time we get here, and sending it could strand a viewer
+      // on a version that landed in between. The shell ignores an update it has
+      // already seen, so an `updated` that repeats the hello costs nothing, and
+      // a browser reconnecting a second after a push needs this to catch up at
+      // all (§5.5).
+      const [fresh] = await deps.db
+        .select({ version: artifacts.version, contentHash: artifacts.contentHash })
+        .from(artifacts)
+        .where(eq(artifacts.id, art.id))
+        .limit(1)
+      // Falls back to the pre-subscribe read only if the row vanished (deleted
+      // between the ACL check and here) — there is nothing fresher to send.
+      const hello = fresh ?? { version: art.version, contentHash: art.contentHash }
       await stream.writeSSE({
         event: 'hello',
-        data: state(art.version, art.contentHash.toString('hex')),
+        data: state(hello.version, hello.contentHash.toString('hex')),
       })
 
       await until

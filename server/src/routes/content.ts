@@ -103,6 +103,24 @@ export function registerContentRoutes(app: Hono<AppEnv>, deps: Deps): void {
       return c.json({ error: 'X-Base-Version must be an integer' }, 400)
     }
 
+    // Defense-in-depth before buffering: the body is gzipped and gzip never
+    // expands, so a compressed body already larger than the uncompressed cap
+    // cannot be a valid under-cap artifact — reject it on the declared
+    // Content-Length without reading a byte. The header can be absent (a chunked
+    // upload sends none), so Caddy's request_body max_size is the real backstop;
+    // this only spares the app from buffering an oversize body it can see coming.
+    // The gunzipCapped check below remains the authority on the uncompressed size.
+    const declaredBytes = Number(c.req.header('content-length'))
+    if (Number.isFinite(declaredBytes) && declaredBytes > deps.cfg.maxArtifactBytes) {
+      return c.json(
+        {
+          error: `the document is larger than ${deps.cfg.maxArtifactBytes} bytes uncompressed`,
+          max_bytes: deps.cfg.maxArtifactBytes,
+        },
+        413,
+      )
+    }
+
     let html: Buffer
     try {
       html = gunzipCapped(Buffer.from(await c.req.arrayBuffer()), deps.cfg.maxArtifactBytes)

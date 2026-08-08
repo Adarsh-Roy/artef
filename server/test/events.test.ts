@@ -7,8 +7,11 @@
 // is that a `pg_notify` fired inside a write transaction reaches a stream held
 // open in another process, and a fake in the middle would prove none of it.
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
-import type pg from 'pg'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { artifacts, users } from '../src/db/schema.js'
+import * as schema from '../src/db/schema.js'
+import { createApp, type Deps } from '../src/app.js'
 import { sha256, sha256Hex } from '../src/lib/crypto.js'
 import { gzipBuf } from '../src/lib/gzip.js'
 import { createNotifier, type Notifier, type UpdatePayload } from '../src/notify.js'
@@ -562,5 +565,53 @@ describe('GET /api/artifacts/:id/events', () => {
 
     await stream.cancel()
     await waitUntil(() => subs.size === 0)
+  })
+
+  it('re-reads after subscribing, so a version committed in the gap is in the hello', async () => {
+    // The fix reads the current version AFTER the subscription is live, so a
+    // push landing between the handler's first read and the hello is never
+    // stranded. Pin that race on a single-connection pool: the write the
+    // notifier injects on subscribe is queued before the route's re-read, so it
+    // is committed by the time the hello reads it back. This stub notifier
+    // delivers no `updated`, so the hello is the only path to v1 — the pre-fix
+    // code, which sent the stale pre-subscribe version, left the reader at v0.
+    const { user, cookie } = await makeUser(deps)
+    const art = await makeArtifact(user)
+
+    const pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 1 })
+    const db = drizzle(pool, { schema })
+    try {
+      let injected = false
+      const notifier: Notifier = {
+        subscribe(id) {
+          if (!injected && id === art.id) {
+            injected = true
+            void pool.query(
+              `UPDATE artifacts
+                 SET version = 1, content_hash = $2, body = $3, body_bytes = $4, updated_at = now()
+               WHERE id = $1`,
+              [art.id, sha256(HTML), gzipBuf(HTML), Buffer.byteLength(HTML)],
+            )
+          }
+          return () => {}
+        },
+        close: async () => {},
+      }
+
+      // Point the shared `deps` at an app backed by the single-connection pool
+      // and the injecting notifier, so `openStream` (which reads `deps.app`)
+      // exercises exactly this wiring.
+      const appDeps: Deps = { cfg: deps.cfg, db, pool, notifier }
+      deps = { ...appDeps, app: createApp(appDeps) } as TestDeps
+
+      const stream = await openStream(`/api/artifacts/${art.id}/events`, {
+        headers: { Cookie: cookie },
+      })
+      const hello = await stream.next(f => f.event === 'hello')
+
+      expect(JSON.parse(hello.data)).toEqual({ version: 1, hash: sha256Hex(HTML) })
+    } finally {
+      await pool.end()
+    }
   })
 })
