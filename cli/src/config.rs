@@ -1,9 +1,5 @@
 //! Global CLI config: `~/.config/artef/config.toml` plus environment overrides (spec §7.3).
 
-// `lint` is the only command wired up so far, and it talks to no server; the callers
-// of this module are `login`, `push`, and the rest of the network commands.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
@@ -61,6 +57,9 @@ impl GlobalConfig {
         Self::load_from(&config_path()?)
     }
 
+    // Writing the config is `artef login`'s job (Task 15); reading it is every other
+    // command's.
+    #[allow(dead_code)]
     pub fn save(&self) -> Result<()> {
         self.save_to(&config_path()?)
     }

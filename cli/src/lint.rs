@@ -110,20 +110,42 @@ pub fn lint_html(html: &str) -> Vec<Violation> {
                 Ok(())
             }),
         ],
-        // Ambiguous markup should degrade the scan, never abort it.
-        strict: false,
+        // Bail out on markup the streaming parser cannot resolve — see `parse_failure`.
+        // This is not "any malformed HTML": unclosed tags, stray end tags and bad
+        // attributes all still parse. It is the narrow case (a text-content tag such
+        // as `<xmp>` in a context where it may or may not be ignored) where the same
+        // bytes can mean two different documents.
+        strict: true,
         ..RewriteStrSettings::new()
     };
 
     if let Err(err) = rewrite_str(html, settings) {
-        found.borrow_mut().push(Violation {
-            severity: Severity::Warn,
-            what: format!("the HTML could not be fully parsed: {err}"),
-            detail: "the CSP check is incomplete for this file".to_string(),
-        });
+        found.borrow_mut().push(parse_failure(&err));
     }
 
     found.into_inner()
+}
+
+/// A document the parser could not resolve is refused, not waved through.
+///
+/// The scan reads a token stream, so ambiguous markup can hide a subresource from it
+/// entirely — `<select><xmp><script src="https://cdn…">` reports clean while a browser
+/// may well load that script. Passing because we could not look is worse than not
+/// looking at all, and spec §7.1 is explicit that the default is to refuse.
+fn parse_failure(err: &impl std::fmt::Display) -> Violation {
+    // lol_html's message is a paragraph; keep the CLI to one line per violation.
+    let message = err.to_string();
+    let summary = message
+        .split("\n\n")
+        .next()
+        .unwrap_or(&message)
+        .replace('\n', " ");
+
+    Violation {
+        severity: Severity::Reject,
+        what: format!("the HTML could not be parsed: {summary}"),
+        detail: "artef cannot tell what a browser would load here; fix the markup, or push with --no-preflight".to_string(),
+    }
 }
 
 /// Where some CSS came from, for the message.
@@ -206,8 +228,15 @@ fn check_frame(found: &RefCell<Vec<Violation>>, el: &Element<'_, '_>) {
     check_attr(found, el, "data", Severity::Reject, DETAIL);
 }
 
-/// Find `url(…)` references, and note which of them are `@import`s.
+/// Scan a block of CSS for both shapes of external reference: `url(…)` and the
+/// bare-string `@import "…"`.
 fn scan_css(found: &RefCell<Vec<Violation>>, css: &str, home: CssHome) {
+    scan_css_urls(found, css, home);
+    scan_css_string_imports(found, css);
+}
+
+/// Find `url(…)` references, and note which of them are `@import`s.
+fn scan_css_urls(found: &RefCell<Vec<Violation>>, css: &str, home: CssHome) {
     let lower = css.to_ascii_lowercase();
     let mut at = 0;
 
@@ -241,6 +270,40 @@ fn scan_css(found: &RefCell<Vec<Violation>>, css: &str, home: CssHome) {
         }
 
         at = value_end + 1;
+    }
+}
+
+/// `@import "https://…";` — the form that names the stylesheet as a plain string
+/// instead of `url(…)`. It is valid CSS and equally blocked by the artifact CSP, so
+/// the `url(…)` scan above is not enough on its own.
+fn scan_css_string_imports(found: &RefCell<Vec<Violation>>, css: &str) {
+    // `to_ascii_lowercase` is byte-for-byte, so offsets into it index `css` too.
+    let lower = css.to_ascii_lowercase();
+    let mut at = 0;
+
+    while let Some(offset) = lower[at..].find("@import") {
+        at = at + offset + "@import".len();
+
+        let rest = &css[at..];
+        let trimmed = rest.trim_start();
+        let Some(quote @ ('"' | '\'')) = trimmed.chars().next() else {
+            continue; // `url(…)`, a variable, or nothing we can read
+        };
+
+        let value_start = rest.len() - trimmed.len() + quote.len_utf8();
+        let Some(end) = rest[value_start..].find(quote) else {
+            return; // unterminated string: nothing further is readable
+        };
+
+        if let Some(url) = external_url(&rest[value_start..value_start + end]) {
+            record(
+                found,
+                Severity::Reject,
+                format!("@import \"{url}\""),
+                INLINE_IT,
+            );
+        }
+        at += value_start + end;
     }
 }
 
@@ -376,6 +439,33 @@ mod tests {
                 expect: &[Reject],
             },
             Case {
+                name: "css @import of a bare double-quoted string",
+                html: r#"<style>@import "https://x/a.css";</style>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "css @import of a bare single-quoted string",
+                html: r#"<style>@import 'https://x/a.css' screen;</style>"#,
+                expect: &[Reject],
+            },
+            Case {
+                // The scan walks byte offsets, so multi-byte characters ahead of the
+                // rule must not throw it off (or panic on a char boundary).
+                name: "css @import after non-ascii text",
+                html: r#"<style>/* — dash — */ @import "https://x/a.css";</style>"#,
+                expect: &[Reject],
+            },
+            Case {
+                name: "css @import of a local file is fine",
+                html: r#"<style>@import "/css/reset.css";</style>"#,
+                expect: &[],
+            },
+            Case {
+                name: "markup the parser cannot resolve, hiding a CDN script",
+                html: r#"<select><xmp><script src="https://cdn.jsdelivr.net/x.js"></script></select>"#,
+                expect: &[Reject],
+            },
+            Case {
                 name: "external url() in a style element",
                 html: r#"<style>body{background:url(https://x/i.png)}</style>"#,
                 expect: &[Reject],
@@ -459,6 +549,45 @@ mod tests {
 
         let v = &lint_html(r#"<script>fetch('/a')</script>"#)[0];
         assert!(v.what.contains("fetch("), "what was {:?}", v.what);
+    }
+
+    #[test]
+    fn a_bare_string_import_names_the_url_it_found() {
+        let v = &lint_html(r#"<style>@import "https://x/a.css";</style>"#)[0];
+        assert!(v.what.contains("https://x/a.css"), "what was {:?}", v.what);
+        assert!(v.what.contains("@import"), "what was {:?}", v.what);
+    }
+
+    #[test]
+    fn a_document_the_parser_cannot_resolve_is_rejected_not_waved_through() {
+        // `<xmp>` inside `<select>`: a browser may or may not ignore the `<xmp>`, so
+        // whether the `<script>` runs cannot be decided from the token stream alone.
+        // A preflight that passes here would be passing because it could not look.
+        let violations =
+            lint_html(r#"<select><xmp><script src="https://x/a.js"></script></select>"#);
+
+        assert_eq!(violations.len(), 1, "violations were {violations:#?}");
+        assert_eq!(violations[0].severity, Reject);
+        assert!(
+            violations[0].what.contains("could not be parsed"),
+            "what was {:?}",
+            violations[0].what
+        );
+        assert!(
+            !violations[0].what.contains('\n') && !violations[0].detail.contains('\n'),
+            "the message must stay on one line: {violations:#?}"
+        );
+    }
+
+    #[test]
+    fn everyday_malformed_markup_is_still_scanned_rather_than_refused() {
+        // Unclosed tags and stray end tags are what agent output actually looks like;
+        // refusing those would be the preflight crying wolf.
+        assert_eq!(
+            severities(r#"<div><p>hi</div></p><img src="https://x/y.png">"#),
+            vec![Reject]
+        );
+        assert_eq!(severities("<style>body{color:red}"), vec![]);
     }
 
     #[test]

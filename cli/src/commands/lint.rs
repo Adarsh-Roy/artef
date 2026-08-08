@@ -35,8 +35,9 @@ pub fn run(path: &Path) -> Result<i32> {
     Ok(exit_code(&violations))
 }
 
-/// One printable line per violation.
-fn format_violation(v: &Violation) -> String {
+/// One printable line per violation. Shared with `push`, so the preflight reads the
+/// same whether it ran on its own or as part of an upload.
+pub fn format_violation(v: &Violation) -> String {
     let prefix = match v.severity {
         Severity::Reject => "error",
         Severity::Warn => "warn",

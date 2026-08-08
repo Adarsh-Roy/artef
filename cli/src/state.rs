@@ -1,9 +1,5 @@
 //! Local artifact state: `.artef.json` in the working directory (spec §7.3).
 
-// `lint` is the only command wired up so far, and it tracks nothing; the callers of
-// this module are `push` and `watch`.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
