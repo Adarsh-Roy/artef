@@ -8,6 +8,13 @@
       "when": 1786196644427,
       "tag": "0000_big_talon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786202470266,
+      "tag": "0001_ms_precision_timestamps",
+      "breakpoints": true
     }
   ]
 }

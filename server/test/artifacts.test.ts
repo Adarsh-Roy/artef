@@ -74,6 +74,20 @@ async function grantTo(artifactId: string, userId: string, role: 'viewer' | 'edi
   await deps.db.insert(artifactGrants).values({ artifactId, userId, role })
 }
 
+/** Inserts through the pool rather than drizzle, because a JS Date cannot
+ *  express a sub-millisecond timestamp and that is exactly what needs
+ *  controlling here. */
+async function makeArtifactAt(owner: User, at: string): Promise<string> {
+  const { rows } = await deps.pool.query<{ id: string }>(
+    `INSERT INTO artifacts
+       (workspace_id, owner_id, name, visibility, content_hash, body, body_bytes, version, created_at, updated_at)
+     VALUES ($1, $2, $3, 'private', $4, $5, 0, 0, $6::timestamptz, $6::timestamptz)
+     RETURNING id`,
+    [owner.workspaceId, owner.id, 'burst', sha256(''), gzipBuf(''), at],
+  )
+  return rows[0].id
+}
+
 type Page = { items: Array<Record<string, unknown>>; next_cursor: string | null }
 
 async function list(cookie: string, query = ''): Promise<Page> {
@@ -330,6 +344,21 @@ describe('PATCH /api/artifacts/:id', () => {
     expect(res.status).toBe(200)
   })
 
+  it('refuses an admin from another workspace re-scoping a public artifact', async () => {
+    const { user: owner } = await makeUser(deps)
+    const { cookie } = await makeUser(deps, { domain: 'other.test', isAdmin: true })
+    // `can()` clears the viewer gate for anything public, so admin alone must
+    // not carry across the workspace boundary (§4.2) — otherwise an admin
+    // anywhere could unpublish a document owned anywhere else.
+    const art = await makeArtifact(owner, { visibility: 'public' })
+
+    const res = await send('PATCH', `/api/artifacts/${art.id}`, asUser(cookie), { visibility: 'private' })
+    expect(res.status).toBe(403)
+
+    const [row] = await deps.db.select().from(artifacts).where(eq(artifacts.id, art.id))
+    expect(row.visibility).toBe('public')
+  })
+
   it('answers 404 when the caller cannot even see the artifact', async () => {
     const { user: owner } = await makeUser(deps)
     const { cookie } = await makeUser(deps)
@@ -527,6 +556,55 @@ describe('GET /api/artifacts', () => {
     const res = await deps.app.request('/api/artifacts?cursor=garbage', { headers: { Cookie: cookie } })
     expect(res.status).toBe(400)
     expect((await res.json()) as { error: string }).toHaveProperty('error')
+  })
+
+  it('rejects a crafted cursor with 400 rather than letting Postgres raise', async () => {
+    const { cookie } = await makeUser(deps)
+    const uuid = '11111111-1111-4111-8111-111111111111'
+    // Every one of these is a timestamp `new Date()` happily accepts — "0" is
+    // the year 2000 — but that Postgres refuses to cast, or that does not
+    // round-trip to the value the cursor claims. A cursor is our own opaque
+    // token, so anything but the exact shape we mint is a 400.
+    const crafted = [
+      '0',
+      'now',
+      '2024',
+      'Tuesday',
+      '2024-01-01',
+      '2024-01-01T00:00:00Z',
+      '2024-02-31T00:00:00.000Z',
+      '2024-13-45T99:99:99.999Z',
+      "2024-01-01T00:00:00.000Z'); DROP TABLE artifacts; --",
+    ]
+
+    for (const time of crafted) {
+      const cursor = Buffer.from(`${time}|${uuid}`).toString('base64url')
+      const res = await deps.app.request(`/api/artifacts?cursor=${encodeURIComponent(cursor)}`, {
+        headers: { Cookie: cookie },
+      })
+      expect(res.status, `cursor time ${JSON.stringify(time)}`).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid cursor' })
+    }
+  })
+
+  it('does not skip a row when two artifacts land in the same millisecond', async () => {
+    const { user, cookie } = await makeUser(deps)
+    // A burst of creates by one agent: microseconds apart, same millisecond.
+    // The cursor travels as a millisecond-precision ISO string, so if the
+    // stored value is finer than the cursor can express, the row on the far
+    // side of the page boundary is silently dropped.
+    const newer = await makeArtifactAt(user, '2024-01-01T00:00:00.123456Z')
+    const older = await makeArtifactAt(user, '2024-01-01T00:00:00.123123Z')
+
+    const first = await list(cookie, '?limit=1')
+    expect(first.items).toHaveLength(1)
+    expect(first.next_cursor).not.toBeNull()
+
+    const second = await list(cookie, `?limit=1&cursor=${encodeURIComponent(first.next_cursor!)}`)
+    expect(second.items).toHaveLength(1)
+
+    // Neither row may be skipped, and neither may be served twice.
+    expect([...idsOf(first), ...idsOf(second)].sort()).toEqual([newer, older].sort())
   })
 
   it('caps limit at 200', async () => {

@@ -11,7 +11,7 @@ export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
   domain: text('domain').notNull().unique(),
   name: text('name'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
 })
 
 export const users = pgTable('users', {
@@ -20,8 +20,8 @@ export const users = pgTable('users', {
   email: citext('email').notNull().unique(),
   name: text('name'),
   isAdmin: boolean('is_admin').notNull().default(false),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true, precision: 3 }),
 })
 
 export const artifacts = pgTable('artifacts', {
@@ -34,8 +34,8 @@ export const artifacts = pgTable('artifacts', {
   body: bytea('body').notNull(),
   bodyBytes: integer('body_bytes').notNull(),
   version: integer('version').notNull().default(0),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
 }, t => [index('artifacts_ws_updated_idx').on(t.workspaceId, t.updatedAt.desc())])
 
 export const artifactGrants = pgTable('artifact_grants', {
@@ -43,7 +43,7 @@ export const artifactGrants = pgTable('artifact_grants', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   role: roleEnum('role').notNull(),
   grantedBy: uuid('granted_by').references(() => users.id),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
 }, t => [primaryKey({ columns: [t.artifactId, t.userId] }), index('artifact_grants_user_idx').on(t.userId)])
 
 export const artifactVersions = pgTable('artifact_versions', {
@@ -51,7 +51,7 @@ export const artifactVersions = pgTable('artifact_versions', {
   version: integer('version').notNull(),
   contentHash: bytea('content_hash').notNull(),
   body: bytea('body').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
 }, t => [primaryKey({ columns: [t.artifactId, t.version] })])
 
 export const assets = pgTable('assets', {
@@ -60,7 +60,7 @@ export const assets = pgTable('assets', {
   mediaType: text('media_type').notNull(),
   body: bytea('body').notNull(),
   byteSize: integer('byte_size').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
 }, t => [primaryKey({ columns: [t.workspaceId, t.sha256] })])
 
 export const machineTokens = pgTable('machine_tokens', {
@@ -71,7 +71,7 @@ export const machineTokens = pgTable('machine_tokens', {
   tokenHash: bytea('token_hash').notNull().unique(),
   prefix: text('prefix').notNull(),
   scopeIds: uuid('scope_ids').array(),
-  expiresAt: timestamp('expires_at', { withTimezone: true }),
-  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true, precision: 3 }),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true, precision: 3 }),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
 })

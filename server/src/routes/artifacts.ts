@@ -288,13 +288,26 @@ function visibleToUser(deps: Deps, user: User, mineOnly: boolean): SQL | undefin
 // --- pagination ----------------------------------------------------------------
 
 interface Cursor {
-  updatedAt: string
+  updatedAt: Date
   id: string
 }
 
-/** Keyset pagination, not OFFSET: the page after this one is defined by the row
- *  the caller last saw, so an artifact updated mid-scroll cannot make another
- *  one appear twice or vanish. */
+/** Exactly what `Date.prototype.toISOString` produces — UTC, three fractional
+ *  digits — and so exactly what `encodeCursor` mints. A cursor is our own opaque
+ *  token, so any other shape is a forgery or a bug, never something to guess at. */
+const ISO_MS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+/**
+ * Keyset pagination, not OFFSET: the page after this one is defined by the row
+ * the caller last saw, so an artifact updated mid-scroll cannot make another one
+ * appear twice or vanish.
+ *
+ * The timestamp travels at millisecond precision because that is all a JS Date
+ * holds. The columns are `timestamptz(3)` for the same reason (migration 0001),
+ * so the value here is the whole stored value — if the column were ever widened
+ * back to microseconds, a row microseconds older than the page boundary would
+ * fall outside this filter and never be served.
+ */
 function encodeCursor(row: ArtifactMeta): string {
   return Buffer.from(`${row.updatedAt.toISOString()}|${row.id}`).toString('base64url')
 }
@@ -306,10 +319,20 @@ function parseCursor(raw: string | undefined): Cursor | null | typeof INVALID {
   const sep = decoded.indexOf('|')
   if (sep === -1) return INVALID
 
-  const updatedAt = decoded.slice(0, sep)
+  const time = decoded.slice(0, sep)
   const id = decoded.slice(sep + 1)
   if (!UUID_RE.test(id)) return INVALID
-  if (Number.isNaN(new Date(updatedAt).getTime())) return INVALID
+
+  // Three checks, none redundant. `new Date` alone is far too generous — it
+  // reads "0" as the year 2000 and "2024-02-31" as the 2nd of March — and the
+  // string was on its way into a `::timestamptz` cast that Postgres would raise
+  // on, turning a crafted query string into a 500. The round-trip is what
+  // rejects a date that parses but is not the date it claims to be.
+  if (!ISO_MS_RE.test(time)) return INVALID
+  const updatedAt = new Date(time)
+  if (Number.isNaN(updatedAt.getTime())) return INVALID
+  if (updatedAt.toISOString() !== time) return INVALID
+
   return { updatedAt, id }
 }
 
@@ -318,7 +341,11 @@ function cursorFilter(cursor: Cursor | null): SQL | undefined {
   // A row comparison, so the (updated_at, id) tiebreak in the ORDER BY and the
   // page boundary are the same rule — two separate comparisons would drop rows
   // that share a timestamp.
-  return sql`(${artifacts.updatedAt}, ${artifacts.id}) < (${cursor.updatedAt}::timestamptz, ${cursor.id}::uuid)`
+  //
+  // The bound value is re-serialized from the parsed Date, never the caller's
+  // text, so the only thing that can reach the database is a string this process
+  // produced itself.
+  return sql`(${artifacts.updatedAt}, ${artifacts.id}) < (${cursor.updatedAt.toISOString()}::timestamptz, ${cursor.id}::uuid)`
 }
 
 /** Anything unusable falls back to the default rather than failing the request:
