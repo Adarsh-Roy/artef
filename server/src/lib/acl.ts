@@ -33,8 +33,9 @@ export function can(
   if (art.visibility === 'restricted') {
     return grantRole !== null && (need === 'viewer' || grantRole === 'editor')
   }
-  // Falls through for 'private' (owner and admins only — grants are ignored) and
-  // for updating a 'public' artifact, which the spec's function also refuses:
-  // publishing a doc leaves only the owner and admins able to change it.
-  return false
+  // Reaching here with 'public' means need === 'editor' — viewing returned true
+  // at the top. Grants survive publishing: sharing a doc with three editors and
+  // then handing out a public link must not revoke their write access (§5.9).
+  if (art.visibility === 'public') return grantRole === 'editor'
+  return false // 'private' — owner and admins only, grants are ignored.
 }

@@ -31,13 +31,18 @@ describe('can — public', () => {
     expect(can(owner, a, 'editor', null)).toBe(true)
     expect(can(admin, a, 'editor', null)).toBe(true)
   })
-  // The spec's can() refuses every non-owner write on a public artifact, grants
-  // included — publishing hands out reading, not writing.
-  it('refuses a member update whatever grant it holds', () => {
-    expect(can(member, a, 'editor', 'editor')).toBe(false)
+  // Publishing a doc must not silently revoke the write access of people it was
+  // already shared with (§5.9: named people keep "can update" alongside
+  // "Anyone with the link").
+  it('lets an editor grant update', () => {
+    expect(can(member, a, 'editor', 'editor')).toBe(true)
+  })
+  it('does not let a viewer grant or an ungranted member update', () => {
     expect(can(member, a, 'editor', 'viewer')).toBe(false)
     expect(can(member, a, 'editor', null)).toBe(false)
   })
+  // Pins the check order: workspace isolation is decided before the editor-grant
+  // branch below it, so a grant row that should not exist cannot be honored.
   it('does not let an out-of-workspace user update, grant or not', () => {
     expect(can(outsider, a, 'editor', 'editor')).toBe(false)
     expect(can(outsideAdmin, a, 'editor', 'editor')).toBe(false)
