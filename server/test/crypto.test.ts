@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   sha256, sha256Hex, signSession, verifySession,
   mintContentToken, verifyContentToken, generateMachineToken, hashToken,
+  timingSafeEqualBuf,
 } from '../src/lib/crypto.js'
 import { gzipBuf, gunzipCapped, PayloadTooLarge } from '../src/lib/gzip.js'
 
@@ -99,6 +100,33 @@ describe('mintContentToken / verifyContentToken', () => {
     expect(verifyContentToken('nodot', artifact, secret, now)).toBe(false)
     expect(verifyContentToken('abc.def', artifact, secret, now)).toBe(false)
     expect(verifyContentToken('.', artifact, secret, now)).toBe(false)
+  })
+  it('rejects an expiry padded with leading zeros — only the minted string verifies', () => {
+    const t = mintContentToken(artifact, secret, now)
+    const [expStr, sig] = t.split('.')
+    expect(verifyContentToken(`0${expStr}.${sig}`, artifact, secret, now)).toBe(false)
+    expect(verifyContentToken(`000${expStr}.${sig}`, artifact, secret, now)).toBe(false)
+    expect(verifyContentToken(`${expStr}.${sig}`, artifact, secret, now)).toBe(true)
+  })
+  it('expires exactly on its expiry second, like a session does', () => {
+    const t = mintContentToken(artifact, secret, now)
+    expect(verifyContentToken(t, artifact, secret, now + 119_000)).toBe(true)
+    expect(verifyContentToken(t, artifact, secret, now + 119_999)).toBe(true)
+    expect(verifyContentToken(t, artifact, secret, now + 120_000)).toBe(false)
+  })
+})
+
+describe('timingSafeEqualBuf', () => {
+  it('is true for equal buffers', () => {
+    expect(timingSafeEqualBuf(Buffer.from('abc'), Buffer.from('abc'))).toBe(true)
+    expect(timingSafeEqualBuf(Buffer.alloc(0), Buffer.alloc(0))).toBe(true)
+  })
+  it('is false for same-length buffers that differ', () => {
+    expect(timingSafeEqualBuf(Buffer.from('abc'), Buffer.from('abd'))).toBe(false)
+  })
+  it('is false for different lengths instead of throwing', () => {
+    expect(timingSafeEqualBuf(Buffer.from('abc'), Buffer.from('abcd'))).toBe(false)
+    expect(timingSafeEqualBuf(Buffer.from('abc'), Buffer.alloc(0))).toBe(false)
   })
 })
 

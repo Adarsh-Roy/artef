@@ -18,14 +18,20 @@ function hmacB64url(secret: string, message: string): string {
   return createHmac('sha256', secret).update(message).digest('base64url')
 }
 
-// Compares two base64url signature strings without leaking where they differ.
-// Different lengths can't be compared by timingSafeEqual, and a length
-// mismatch already means "not our signature", so reject it up front.
-function sigMatches(expected: string, given: string): boolean {
-  const a = Buffer.from(expected)
-  const b = Buffer.from(given)
+/**
+ * Constant-time buffer comparison that tolerates unequal lengths. Node's
+ * timingSafeEqual throws on those, and a length mismatch already means "not the
+ * value we expected", so it is rejected up front. Use this anywhere a secret is
+ * compared — token hashes included — instead of Buffer.equals.
+ */
+export function timingSafeEqualBuf(a: Buffer, b: Buffer): boolean {
   if (a.length !== b.length) return false
   return timingSafeEqual(a, b)
+}
+
+// Compares two base64url signature strings without leaking where they differ.
+function sigMatches(expected: string, given: string): boolean {
+  return timingSafeEqualBuf(Buffer.from(expected), Buffer.from(given))
 }
 
 /** Session cookie value: `b64url(json) + "." + b64url(HMAC-SHA256(secret, b64url(json)))`. */
@@ -77,9 +83,12 @@ export function verifyContentToken(
   if (!/^\d+$/.test(expStr)) return false
   const expSecs = Number(expStr)
   if (!Number.isSafeInteger(expSecs)) return false
-  // Signature covers expStr, so a stretched expiry invalidates the token.
-  if (!sigMatches(hmacB64url(secret, `content-token:${artifactId}:${expSecs}`), sig)) return false
-  return Math.floor(nowMs / 1000) <= expSecs
+  // The signature covers the expiry exactly as it arrived, not the number it
+  // parses to, so a stretched expiry invalidates the token and no rewriting of
+  // the digits — "0001700000120" for "1700000120" — verifies as the same token.
+  if (!sigMatches(hmacB64url(secret, `content-token:${artifactId}:${expStr}`), sig)) return false
+  // Rejects on the expiry second itself, matching verifySession.
+  return Math.floor(nowMs / 1000) < expSecs
 }
 
 /**
