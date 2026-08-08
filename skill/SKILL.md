@@ -27,13 +27,13 @@ Write the document so it needs nothing but itself.
 Worse than a rejection, because the document looks fine to you and is dead for the reader.
 
 - `fetch()`, `XMLHttpRequest`, `EventSource`, `WebSocket` — every outbound call is a no-op under `connect-src 'none'`. Documents are pushed to; they never poll.
-- `<form action="https://…">` — submissions are blocked by `form-action 'none'`.
+- Forms. `form-action 'none'` blocks *every* submission, not just external ones — `<form action="/submit">` passes lint but the submit does nothing. There is no server to submit to; a document is a dumb document.
 
 ## What you do have
 
 - Inline `<script>` (including `eval`) and inline `<style>` — no nonce, no hash, no restrictions.
 - `data:` URIs for images, fonts, audio and video.
-- Relative and root-relative paths, including `/assets/…`. `artef push` pulls large inline images out into `/assets/<sha>` for you; you never write those paths by hand.
+- `/assets/<sha>` paths — but only the ones `artef push` emits by pulling large inline images out for you. Don't hand-write relative paths like `<img src="chart.png">`: it passes lint (`img-src 'self'` allows it) but nothing exists there server-side, so it 404s. Embed images as `data:` URIs; extraction moves the big ones to `/assets/` on its own.
 - Ordinary links. `<a href="https://example.com">` is a navigation the reader chooses, not a subresource, so it works — but skip `target="_blank"`, the sandbox blocks new windows.
 
 ## Interactivity
