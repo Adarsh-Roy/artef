@@ -27,10 +27,12 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # DATABASE_URL and PORT are set here so they always match the compose
-      # network and image, and override anything in .env. This is why the
-      # operator never has to hand-write a connection string.
-      DATABASE_URL: "postgres://artef:${POSTGRES_PASSWORD:-artef}@postgres:5432/artef"
+      # DATABASE_URL defaults to the bundled postgres, so out of the box the
+      # operator never hand-writes a connection string. But if they set
+      # DATABASE_URL in .env (a managed database), that value is honored —
+      # Outline muscle memory (spec §10). PORT is fixed to match the image and
+      # the Caddyfile upstream.
+      DATABASE_URL: "${DATABASE_URL:-postgres://artef:${POSTGRES_PASSWORD:-artef}@postgres:5432/artef}"
       PORT: "3000"
     # Uncomment to reach the app directly, without Caddy, for local testing:
     # ports:

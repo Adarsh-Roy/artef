@@ -13,11 +13,11 @@ before. One DNS record, one OAuth client, a handful of env vars, `docker compose
 2. **OAuth.** One Google OAuth client (Google Cloud Console → APIs & Services →
    Credentials). Authorized redirect URI:
    `https://artef.company.com/auth/google/callback`.
-3. **Env.** Copy the example and fill it in:
+3. **Env.** Copy the example and fill in the six values it flags:
    ```bash
    cp .env.example .env
    # set DOMAIN, URL, SECRET_KEY (openssl rand -hex 32), ALLOWED_DOMAINS,
-   # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, POSTGRES_PASSWORD
+   # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
    ```
 4. **Run.** Migrations run on boot — no separate migrate step:
    ```bash
@@ -66,7 +66,7 @@ allowed, what fails loudly, and what fails silently, with a complete example.
 ```bash
 docker compose -f docker-compose.dev.yml up -d   # postgres only, on localhost:5433
 cd server && pnpm i && pnpm test                  # server tests (vitest)
-cd cli && cargo test                              # CLI tests
+cd ../cli && cargo test                           # CLI tests
 ```
 
 The server is TypeScript (Hono, Drizzle, Postgres); the CLI is Rust.
