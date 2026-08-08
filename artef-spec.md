@@ -808,6 +808,8 @@ Nothing blocking. Two things to decide during implementation rather than now:
 
 3. **Sandbox `allow-downloads`.** A report that offers a "download this CSV" link needs the `allow-downloads` sandbox token, or the click silently does nothing. Off for now; add when a real artifact wants it.
 
+4. **Pre-provisioning vs `hd`-derived workspaces.** A grant pre-provisions a user row with the workspace derived from the typed address (§5.3), while login derives it from the IdP where possible (§4.3 rule 3) — and login keeps an existing row's workspace. For a Google org whose secondary-domain address legitimately resolves to a different `hd`, the pre-provisioned workspace wins. Narrow, and bounded by the domain-equality check; revisit if a real multi-domain org hits it.
+
 ---
 
 ## 14. Prior Art
