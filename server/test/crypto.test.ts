@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   sha256, sha256Hex, signSession, verifySession,
   mintContentToken, verifyContentToken, generateMachineToken, hashToken,
@@ -46,6 +46,20 @@ describe('signSession / verifySession', () => {
   it('rejects an expired session', () => {
     const v = signSession({ uid: 'user-1', exp: nowSecs() - 1 }, secret)
     expect(verifySession(v, secret)).toBeNull()
+  })
+  // The expiry second itself is already expired — same boundary as
+  // verifyContentToken, so the two never disagree by one second.
+  it('rejects a session on the exact expiry second', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_700_000_000_000)
+      expect(verifySession(signSession({ uid: 'user-1', exp: 1_700_000_000 }, secret), secret)).toBeNull()
+      expect(verifySession(signSession({ uid: 'user-1', exp: 1_700_000_001 }, secret), secret)).toEqual({
+        uid: 'user-1',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
   it('rejects malformed values', () => {
     expect(verifySession('', secret)).toBeNull()
