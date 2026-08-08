@@ -15,6 +15,7 @@ import { sessionMiddleware } from './auth/session.js'
 import { registerArtifactRoutes } from './routes/artifacts.js'
 import { registerContentRoutes } from './routes/content.js'
 import { registerTokenRoutes } from './routes/tokens.js'
+import { registerViewerRoutes } from './viewer/routes.js'
 
 /** Live-update fan-out (spec §5.5). Optional until the SSE milestone builds it. */
 export interface Notifier {
@@ -82,6 +83,11 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   // never see it.
   registerArtifactRoutes(app, deps)
   registerContentRoutes(app, deps)
+  // Last, because `GET /:id` matches any single path segment. It hands anything
+  // that is not shaped like an artifact id straight on to the next handler, so
+  // registration order is not what keeps /_health working — but a route that
+  // greedy still belongs at the bottom of the file.
+  registerViewerRoutes(app, deps)
 
   // Spec §10: 200 exactly when the database is reachable.
   app.get('/_health', async c => {

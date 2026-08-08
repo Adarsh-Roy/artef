@@ -191,11 +191,35 @@ describe('PUT /api/artifacts/:id/content', () => {
     expect(await res.json()).toEqual({ version: 2, changed: true })
   })
 
+  it('answers 304, not 409, when the content is unchanged and the base is stale', async () => {
+    const { art, header } = await ownedArtifact()
+    await pushHtml(deps, header, art.id, HTML)
+
+    // The document on the server is already the document being pushed, so
+    // there is nothing to conflict about: a daemon that lost track of the
+    // version number must not be told to re-resolve a write it does not need.
+    const res = await pushHtml(deps, header, art.id, HTML, { 'X-Base-Version': '0' })
+    expect(res.status).toBe(304)
+    expect((await stored(art.id)).version).toBe(1)
+  })
+
   it('refuses a non-integer X-Base-Version with 400', async () => {
     const { art, header } = await ownedArtifact()
     const res = await pushHtml(deps, header, art.id, HTML, { 'X-Base-Version': 'latest' })
     expect(res.status).toBe(400)
     expect(await res.json()).toHaveProperty('error')
+    expect((await stored(art.id)).version).toBe(0)
+  })
+
+  it('refuses every other spelling of a number too', async () => {
+    const { art, header } = await ownedArtifact()
+
+    // `Number()` reads all of these, which is exactly why the header is matched
+    // against digits instead: a version is written the one way or not at all.
+    for (const raw of ['1e2', '0x10', '1.0', '+1', '-1', ' 1 2', 'Infinity']) {
+      const res = await pushHtml(deps, header, art.id, HTML, { 'X-Base-Version': raw })
+      expect(res.status, raw).toBe(400)
+    }
     expect((await stored(art.id)).version).toBe(0)
   })
 

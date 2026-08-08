@@ -34,6 +34,17 @@ export function artifactPageHeaders(): Record<string, string> {
   }
 }
 
+/** `/a/:id` — the app's own page, which embeds a content token in the markup
+ *  it returns (§2.4). A short-lived credential must not sit in a cache waiting
+ *  for the next person on a shared machine. */
+export function shellPageHeaders(): Record<string, string> {
+  return {
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'private, no-store',
+  }
+}
+
 /**
  * `GET /api/artifacts/:id/content` — agents reading a document back. The
  * `Content-Disposition` matters as much as the CSP: without it a logged-in

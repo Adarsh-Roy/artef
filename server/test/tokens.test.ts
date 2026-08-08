@@ -156,8 +156,10 @@ describe('bearer middleware', () => {
     })
 
     it('still lets a client with a dead token reach the sign-in routes', async () => {
+      // The logout page, not a 401: a token this middleware rejects must not
+      // be the reason the caller cannot reach the routes that issue a new one.
       const res = await get('/auth/logout', { Authorization: 'Bearer art_live_garbage' })
-      expect(res.status).toBe(302)
+      expect(res.status).toBe(200)
     })
 
     it('does not authenticate a request outside /api, even with a good token', async () => {

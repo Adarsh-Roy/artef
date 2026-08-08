@@ -10,6 +10,8 @@ import type { AppEnv, Deps } from '../app.js'
 import type { Config } from '../config.js'
 import { users, workspaces } from '../db/schema.js'
 import { CONSUMER_DOMAINS } from '../lib/consumer-domains.js'
+import { esc } from '../viewer/shell.js'
+import { originCheck } from './origin.js'
 import { buildSessionCookie, clearSessionCookie } from './session.js'
 
 export type AuthErrorCode = 'unverified-email' | 'missing-hd' | 'consumer-domain' | 'domain-not-allowed'
@@ -312,7 +314,22 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: Deps): void {
     app.get(`/auth/${p.id}/callback`, c => finishLogin(c, p))
   }
 
-  app.get('/auth/logout', c => {
+  // Logging out is a state change, so it is a POST and it is origin-checked
+  // like every other one (§2.2). As a GET it was something any other page could
+  // trigger with an <img> tag or a link preview crawler, which is a nuisance
+  // rather than a breach — but the fix is one form.
+  app.use('/auth/logout', originCheck(cfg))
+
+  app.get('/auth/logout', c =>
+    c.html(
+      page(
+        'Log out',
+        '<form method="post" action="/auth/logout"><button type="submit">Log out</button></form>',
+      ),
+    ),
+  )
+
+  app.post('/auth/logout', c => {
     c.header('set-cookie', clearSessionCookie(), { append: true })
     return c.redirect('/', 302)
   })
@@ -355,9 +372,6 @@ const REFUSALS: Record<AuthErrorCode, string> = {
   'domain-not-allowed':
     'Sign-in is limited to allowed domains. Ask whoever runs this server to add your domain to ALLOWED_DOMAINS.',
 }
-
-const esc = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 function page(title: string, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">

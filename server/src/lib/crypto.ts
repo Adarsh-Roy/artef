@@ -3,7 +3,10 @@
 // machine tokens (§5.6) share it, so there is no extra key to configure.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
-const CONTENT_TOKEN_TTL_SECS = 120
+/** Long enough for a slow page load, short enough that a token in a log or a
+ *  shared URL is dead before anyone can use it (spec §2.4). Exported because
+ *  the mint endpoint tells the client how long it has. */
+export const CONTENT_TOKEN_TTL_SECS = 120
 const MACHINE_TOKEN_PREFIX = 'art_live_'
 
 export function sha256(data: Buffer | string): Buffer {

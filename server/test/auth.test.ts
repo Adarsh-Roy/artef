@@ -617,13 +617,40 @@ describe('callback', () => {
 })
 
 describe('logout', () => {
-  it('clears the session cookie and goes home', async () => {
+  it('clears the session cookie and goes home on POST', async () => {
     const { cookie } = await makeUser(deps)
-    const res = await deps.app.request('/auth/logout', { headers: { Cookie: cookie } })
+    const res = await deps.app.request('/auth/logout', {
+      method: 'POST',
+      headers: { Cookie: cookie, Origin: 'https://artef.test' },
+    })
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toBe('/')
     const cleared = res.headers.getSetCookie().find(c => c.startsWith(`${SESSION_COOKIE}=`))
     expect(cleared).toContain('Max-Age=0')
+  })
+
+  // Logging out is a state change, so it cannot be something another site can
+  // cause by embedding an image or a link (spec §2.2).
+  it('does not log anyone out on GET — it offers the form', async () => {
+    const { cookie } = await makeUser(deps)
+    const res = await deps.app.request('/auth/logout', { headers: { Cookie: cookie } })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toMatch(/^text\/html/)
+
+    const body = await res.text()
+    expect(body).toContain('method="post"')
+    expect(body).toContain('action="/auth/logout"')
+    expect(res.headers.getSetCookie()).toHaveLength(0)
+  })
+
+  it('refuses a cross-site POST that carries the session', async () => {
+    const { cookie } = await makeUser(deps)
+    const res = await deps.app.request('/auth/logout', {
+      method: 'POST',
+      headers: { Cookie: cookie, Origin: 'https://evil.example' },
+    })
+    expect(res.status).toBe(403)
+    expect(res.headers.getSetCookie()).toHaveLength(0)
   })
 })
 

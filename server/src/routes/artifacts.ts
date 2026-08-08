@@ -17,7 +17,9 @@ import { gzipBuf } from '../lib/gzip.js'
 const MAX_NAME_LENGTH = 200
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** What an artifact id looks like. Exported because `GET /:id` decides whether
+ *  a single path segment is a document id by exactly this shape (spec §5.7). */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const VISIBILITIES = ['private', 'restricted', 'workspace', 'public'] as const
 
 type Visibility = (typeof VISIBILITIES)[number]
@@ -83,8 +85,12 @@ export async function getArtifactWithGrant(
  * Admin is a workspace role, so it stops at the workspace boundary — otherwise
  * an admin anywhere could delete any `public` artifact, which `can()` lets them
  * view by design.
+ *
+ * Exported because the shell page shows the Share button to exactly the people
+ * this returns true for — the button opens the dialog that changes visibility
+ * and grants, so it answers the same question (§5.9).
  */
-function isOwnerOrAdmin(user: User, art: ArtifactMeta): boolean {
+export function isOwnerOrAdmin(user: User, art: ArtifactMeta): boolean {
   if (user.workspaceId !== art.workspaceId) return false
   return user.id === art.ownerId || user.isAdmin
 }

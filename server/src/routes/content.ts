@@ -21,7 +21,8 @@ import type { Context, Hono } from 'hono'
 import type { AppEnv, Deps } from '../app.js'
 import { artifacts } from '../db/schema.js'
 import { can } from '../lib/acl.js'
-import { sha256 } from '../lib/crypto.js'
+import { sendStoredBody } from '../lib/blob.js'
+import { CONTENT_TOKEN_TTL_SECS, mintContentToken, sha256 } from '../lib/crypto.js'
 import { gunzipCapped, gzipBuf, PayloadTooLarge } from '../lib/gzip.js'
 import { contentApiHeaders } from '../lib/headers.js'
 import { getArtifactWithGrant, type ArtifactMeta } from './artifacts.js'
@@ -57,24 +58,23 @@ export function registerContentRoutes(app: Hono<AppEnv>, deps: Deps): void {
       return c.body(null, 200, { ...readHeaders(found), 'Content-Length': String(found.bodyBytes) })
     }
 
-    // The body is read on its own, and only here: the metadata helper never
-    // selects it, which is what keeps the list endpoint off the TOAST heap.
-    const [row] = await deps.db
-      .select({ body: artifacts.body })
-      .from(artifacts)
-      .where(eq(artifacts.id, found.id))
-    if (row === undefined) return notFound(c)
+    return (await sendStoredBody(c, deps, found, readHeaders(found))) ?? notFound(c)
+  })
 
-    // Stored gzipped and served gzipped — the server does not decompress at all
-    // for a client that can take it, which is most of them (spec §3).
-    if (acceptsGzip(c.req.header('Accept-Encoding'))) {
-      return c.body(toBody(row.body), 200, { ...readHeaders(found), 'Content-Encoding': 'gzip' })
-    }
-    // The cap is the configured one, except for a document that was already
-    // stored when the limit was higher — refusing to serve those would make
-    // lowering MAX_ARTIFACT_BYTES retroactively destroy access to real data.
-    const cap = Math.max(deps.cfg.maxArtifactBytes, found.bodyBytes)
-    return c.body(toBody(gunzipCapped(row.body, cap)), 200, readHeaders(found))
+  // The credential the shell embeds in its iframe and refreshes before each
+  // live reload (spec §2.4). Minted only after the ordinary session-or-bearer
+  // ACL check passes, which is what makes it safe to put in a URL: it is a
+  // two-minute, single-artifact viewing capability and grants nothing else.
+  app.get('/api/artifacts/:id/content-token', async c => {
+    const found = await viewable(deps, c)
+    if (found === null) return notFound(c)
+
+    // A short-lived credential has no business in any cache.
+    c.header('Cache-Control', 'no-store')
+    return c.json({
+      t: mintContentToken(found.id, deps.cfg.secretKey),
+      ttl_seconds: CONTENT_TOKEN_TTL_SECS,
+    })
   })
 
   app.put('/api/artifacts/:id/content', async c => {
@@ -287,24 +287,18 @@ function isGzip(raw: string | undefined): boolean {
   return raw?.trim().toLowerCase() === 'gzip'
 }
 
+/**
+ * Digits and nothing else. `Number()` is far too generous for a value this
+ * load-bearing: it reads `1e2` as 100, `0x10` as 16 and `1.0` as 1, so a client
+ * that garbled the header would silently have its write compared against a
+ * version it never meant — and `Number.isInteger` waves all three through.
+ */
 function parseBaseVersion(raw: string | undefined): number | null | typeof INVALID {
-  if (raw === undefined || raw.trim() === '') return null
-  const n = Number(raw.trim())
-  return Number.isInteger(n) && n >= 0 ? n : INVALID
-}
-
-/** Whether the client will take gzip. `gzip;q=0` is an explicit refusal, and a
- *  client that says so gets the document decompressed. */
-function acceptsGzip(header: string | undefined): boolean {
-  if (header === undefined) return false
-  for (const part of header.split(',')) {
-    const [token, ...params] = part.split(';').map(s => s.trim().toLowerCase())
-    if (token !== 'gzip' && token !== '*') continue
-    const q = params.find(p => p.startsWith('q='))
-    if (q !== undefined && Number(q.slice(2)) === 0) continue
-    return true
-  }
-  return false
+  const value = raw?.trim() ?? ''
+  if (value === '') return null
+  if (!/^\d+$/.test(value)) return INVALID
+  const n = Number(value)
+  return Number.isSafeInteger(n) ? n : INVALID
 }
 
 // --- shared ----------------------------------------------------------------------
@@ -319,9 +313,5 @@ async function viewable(deps: Deps, c: Context<AppEnv>): Promise<ArtifactMeta | 
   if (found === null || !can(user, found.art, 'viewer', found.grantRole)) return null
   return found.art
 }
-
-/** Hono's body type wants a plain Uint8Array; a node Buffer is one, but its
- *  declared ArrayBufferLike does not satisfy the narrower generic. No copy. */
-const toBody = (b: Buffer): Uint8Array<ArrayBuffer> => b as unknown as Uint8Array<ArrayBuffer>
 
 const notFound = (c: Context<AppEnv>) => c.json({ error: 'not found' }, 404)
