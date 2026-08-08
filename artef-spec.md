@@ -247,6 +247,8 @@ CREATE TABLE assets (
     PRIMARY KEY (workspace_id, sha256)
 );
 
+CREATE INDEX ON assets (sha256);   -- the serve path (§5.4) looks up by sha alone
+
 CREATE TABLE machine_tokens (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id  uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
