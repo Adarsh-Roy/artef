@@ -61,7 +61,14 @@ export const assets = pgTable('assets', {
   body: bytea('body').notNull(),
   byteSize: integer('byte_size').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
-}, t => [primaryKey({ columns: [t.workspaceId, t.sha256] })])
+}, t => [
+  primaryKey({ columns: [t.workspaceId, t.sha256] }),
+  // The serve path (§5.4) is unauthenticated, so it has no workspace to filter
+  // on and looks up by hash alone — which the primary key cannot answer, since
+  // `sha256` is its second column. Without this every image request in every
+  // artifact view scans the table.
+  index('assets_sha256_idx').on(t.sha256),
+])
 
 export const machineTokens = pgTable('machine_tokens', {
   id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),

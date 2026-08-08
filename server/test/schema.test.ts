@@ -19,6 +19,14 @@ describe('schema', () => {
       JOIN pg_class c ON c.oid = a.attrelid
       WHERE c.relname IN ('artifacts','artifact_versions','assets') AND a.attname = 'body'`)
     expect(storage.rows.map((x: any) => x.attstorage)).toEqual(['e', 'e', 'e'])
+    // `GET /assets/:sha` is unauthenticated (§5.4), so it has no workspace to
+    // filter on and matches by hash alone — which the (workspace_id, sha256)
+    // primary key cannot answer. Without this index every image request in
+    // every artifact view scans the assets table.
+    const idx = await pool.query(
+      `SELECT indexname FROM pg_indexes WHERE schemaname='public' AND tablename='assets'`,
+    )
+    expect(idx.rows.map((x: any) => x.indexname)).toContain('assets_sha256_idx')
     await pool.end()
   })
 })

@@ -15,6 +15,13 @@
       "when": 1786202470266,
       "tag": "0001_ms_precision_timestamps",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786209047086,
+      "tag": "0002_assets_sha256_index",
+      "breakpoints": true
     }
   ]
 }
