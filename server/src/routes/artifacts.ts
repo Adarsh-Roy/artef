@@ -231,11 +231,18 @@ export function registerArtifactRoutes(app: Hono<AppEnv>, deps: Deps): void {
     const cursor = parseCursor(c.req.query('cursor'))
     if (cursor === INVALID) return c.json({ error: 'invalid cursor' }, 400)
 
+    // A scoped token is a containment boundary, not merely a write guard: an
+    // agent trusted with one document must not be able to enumerate the names
+    // of every other one. This narrows the page, it never widens it — the
+    // visibility filter still has to pass for each row (spec §5.6).
+    const scopeIds = c.get('tokenScopeIds')
+
     const where = and(
       // Workspace isolation first, exactly as `can()` does it (spec §4.2) —
       // including for `public`, which is listable only by its own workspace.
       eq(artifacts.workspaceId, user.workspaceId),
       visibleToUser(deps, user, c.req.query('mine') === 'true'),
+      scopeIds === null ? undefined : inArray(artifacts.id, scopeIds),
       cursorFilter(cursor),
     )
 

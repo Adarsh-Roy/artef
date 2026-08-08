@@ -53,6 +53,11 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   // yet — a state-changing request must never reach a handler unchecked.
   app.use('/api/*', originCheck(deps.cfg))
 
+  // A path that matches no route is an error like any other, so it answers in
+  // the same shape. Hono's default is plain text, which a client that parses
+  // every response as JSON reports as a parse failure rather than a 404.
+  app.notFound(c => c.json({ error: 'not found' }, 404))
+
   // Every error body on this API is `{ "error": ... }`, and an unexpected throw
   // must not be the one exception — Hono's default 500 is plain text, which a
   // client parsing JSON reports as a parse failure instead of a server error.

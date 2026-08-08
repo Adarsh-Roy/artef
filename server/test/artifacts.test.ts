@@ -565,11 +565,55 @@ describe('GET /api/artifacts', () => {
     const res = await deps.app.request('/api/artifacts')
     expect(res.status).toBe(401)
   })
+
+  it('narrows the list to a scoped token, which may not enumerate the workspace', async () => {
+    const { user } = await makeUser(deps)
+    const inScope = await makeArtifact(user, { name: 'in scope' })
+    const outOfScope = await makeArtifact(user, { name: 'out of scope' })
+
+    const scoped = await makeMachineToken(deps, user.id, { scopeIds: [inScope.id] })
+    const res = await deps.app.request('/api/artifacts', { headers: scoped.header })
+    expect(res.status).toBe(200)
+    expect(idsOf((await res.json()) as Page)).toEqual([inScope.id])
+
+    // The same user, unscoped, still sees both — the narrowing is the token's,
+    // not the user's.
+    const open = await makeMachineToken(deps, user.id)
+    const all = await deps.app.request('/api/artifacts', { headers: open.header })
+    expect(idsOf((await all.json()) as Page).sort()).toEqual([inScope.id, outOfScope.id].sort())
+  })
+
+  it('intersects a token scope with the visibility filter rather than widening it', async () => {
+    const { user: owner } = await makeUser(deps)
+    const { user: me } = await makeUser(deps)
+    const hidden = await makeArtifact(owner, { name: 'not mine to see' })
+    const mine = await makeArtifact(me, { name: 'mine' })
+
+    // A token scoped to an artifact its user cannot view does not grant a view.
+    const { header } = await makeMachineToken(deps, me.id, { scopeIds: [hidden.id, mine.id] })
+    const res = await deps.app.request('/api/artifacts', { headers: header })
+    expect(idsOf((await res.json()) as Page)).toEqual([mine.id])
+  })
 })
 
 // ---------------------------------------------------------------------------
 // Unexpected failures
 // ---------------------------------------------------------------------------
+
+describe('notFound', () => {
+  it('answers an unrouted path with a JSON 404', async () => {
+    const res = await deps.app.request('/api/no-such-thing')
+    expect(res.status).toBe(404)
+    expect(res.headers.get('Content-Type')).toContain('application/json')
+    expect(await res.json()).toEqual({ error: 'not found' })
+  })
+
+  it('answers an unrouted path outside /api with a JSON 404 too', async () => {
+    const res = await deps.app.request('/nope/nope')
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'not found' })
+  })
+})
 
 describe('onError', () => {
   it('answers a thrown error with a JSON 500', async () => {
