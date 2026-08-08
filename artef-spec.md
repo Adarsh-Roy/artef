@@ -336,6 +336,9 @@ def can(user: User | None, art: Artifact, need: Role) -> bool:
     if art.visibility == 'restricted':
         r = grant_role(user, art)
         return r is not None and (need == 'viewer' or r == 'editor')
+    if art.visibility == 'public':
+        # need == 'editor' here — the viewer case returned True at the top.
+        return grant_role(user, art) == 'editor'
     return False   # 'private'
 ```
 
@@ -348,7 +351,7 @@ Visibility semantics:
 | `workspace` | anyone in the workspace | owner + `editor` grants |
 | `public` | anyone with the link, no login | owner + `editor` grants |
 
-Grants stack on top of `workspace` visibility so you can make a doc readable org-wide but writable by three people.
+Grants stack on top of `workspace` and `public` visibility so you can make a doc readable org-wide (or by anyone with the link) but writable by three people. Publishing a doc never revokes a collaborator's write access.
 
 Note the second line: `user.workspace_id != art.workspace_id` returns `False` before any other check. Workspace isolation is enforced once, at the top, rather than being re-derived per visibility level.
 
