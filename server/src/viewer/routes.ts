@@ -83,7 +83,7 @@ export function registerViewerRoutes(app: Hono<AppEnv>, deps: Deps): void {
         id: art.id,
         name: art.name,
         version: art.version,
-        isPublic,
+        visibility: art.visibility,
         // Sharing is an ownership decision, never an editing one (§5.9).
         canShare: user !== null && isOwnerOrAdmin(user, art),
         token: isPublic ? null : mintContentToken(art.id, deps.cfg.secretKey),

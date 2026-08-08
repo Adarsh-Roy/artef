@@ -16,6 +16,7 @@ import { gunzipSync } from 'node:zlib'
 import { artifacts, artifactGrants, users } from '../src/db/schema.js'
 import { mintContentToken, sha256, verifyContentToken } from '../src/lib/crypto.js'
 import { gzipBuf } from '../src/lib/gzip.js'
+import { SHELL_CSP } from '../src/lib/headers.js'
 import { esc } from '../src/viewer/shell.js'
 import {
   closeDb,
@@ -169,8 +170,33 @@ describe('GET /a/:id', () => {
 
     const seenByPeer = await (await shell(art.id, { Cookie: peer.cookie })).text()
     expect(seenByPeer).not.toContain('id="share-button"')
-    // The mount point is always there; Task 9 fills it.
+    // The mount point is always there; the dialog inside it is not.
     expect(seenByPeer).toContain('id="share-root"')
+    expect(seenByPeer).not.toContain('id="share-dialog"')
+    expect(seenByPeer).not.toContain('can update')
+  })
+
+  it('carries a CSP of its own, on the shell and on the login page', async () => {
+    const { art, cookie } = await published({ visibility: 'workspace' })
+
+    const readers: Record<string, string>[] = [{ Cookie: cookie }, {}]
+    for (const headers of readers) {
+      const res = await shell(art.id, headers)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('Content-Security-Policy')).toBe(SHELL_CSP)
+    }
+    // And on the refusal, which is a page from this origin like any other.
+    const missing = await shell(UNKNOWN_ID, { Cookie: cookie })
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get('Content-Security-Policy')).toBe(SHELL_CSP)
+
+    // The page's own script, its EventSource and its fetches all have to keep
+    // working under it — and the frame it is built around most of all.
+    expect(SHELL_CSP).toContain("default-src 'none'")
+    expect(SHELL_CSP).toContain("script-src 'unsafe-inline'")
+    expect(SHELL_CSP).toContain("connect-src 'self'")
+    expect(SHELL_CSP).toContain("frame-src 'self'")
+    expect(SHELL_CSP).toContain("base-uri 'none'")
   })
 
   it('offers logout to a signed-in reader and sign-in to an anonymous one', async () => {
@@ -256,6 +282,88 @@ describe('GET /a/:id', () => {
     expect(body).toBe(await unknown.text())
     expect(body).toBe(await garbage.text())
     expect(body).not.toContain('private plans')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The share dialog (spec §5.9) — the product's only UI
+// ---------------------------------------------------------------------------
+
+/** The dialog markup on its own, so an assertion about the dialog cannot be
+ *  satisfied by something elsewhere on the page. */
+function shareDialog(body: string): string {
+  const found = /<dialog[\s\S]*?<\/dialog>/.exec(body)
+  expect(found, 'no share dialog in the page').not.toBeNull()
+  return found![0]
+}
+
+/** What a reader actually sees: tags and attributes removed, text left. */
+const visibleText = (html: string) => html.replace(/<[^>]*>/g, ' ')
+
+describe('the share dialog', () => {
+  it('offers the three visibility radios, naming the workspace', async () => {
+    const { art, cookie } = await published({ visibility: 'workspace' })
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    expect(dialog).toContain('id="share-dialog"')
+    expect(dialog).toContain('Anyone at example.com')
+    expect(dialog).toContain('Only people I choose')
+    expect(dialog).toContain('Anyone with the link')
+    // The one that is true is the one that is checked.
+    expect(dialog).toMatch(/value="workspace"[^>]*checked/)
+    expect(dialog).not.toMatch(/value="public"[^>]*checked/)
+    expect(dialog).not.toMatch(/value="restricted"[^>]*checked/)
+  })
+
+  it('checks no radio at all for a private document, and says "Only you"', async () => {
+    const { art, cookie } = await published()
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    // §5.9: private is the state before anything is shared. It is not a fourth
+    // option, because nobody could say how it differs from "only people I choose".
+    expect(dialog).not.toContain('value="private"')
+    expect(dialog).not.toContain('checked')
+    expect(visibleText(dialog)).toContain('Only you')
+  })
+
+  it('says nothing about "Only you" once the document is shared', async () => {
+    const { art, cookie } = await published({ visibility: 'restricted' })
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    expect(dialog).toMatch(/value="restricted"[^>]*checked/)
+    expect(dialog).toMatch(/id="share-only-you"[^>]*hidden/)
+  })
+
+  it('labels the roles "can view" and "can update", and never "can edit"', async () => {
+    const { art, cookie } = await published()
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    const text = visibleText(dialog)
+    expect(text).toContain('can view')
+    expect(text).toContain('can update')
+    // §12.1: there is no browser editing, and a share dialog that promises a
+    // text cursor is worse than one with an awkward verb. `editor` stays an API
+    // value — it never reaches the reader.
+    expect(text).not.toMatch(/edit/i)
+  })
+
+  it('wires the dialog to the grants API and to the copy link', async () => {
+    const { art, cookie } = await published()
+
+    const body = await (await shell(art.id, { Cookie: cookie })).text()
+    expect(body).toContain(`/api/artifacts/${art.id}`)
+    expect(body).toContain("'/grants'")
+    expect(body).toContain("credentials: 'same-origin'")
+    expect(body).toContain('navigator.clipboard.writeText')
+    expect(body).toContain(`https://artef.test/${art.id}`)
+  })
+
+  it('escapes an XSS artifact name inside the dialog too', async () => {
+    const { art, cookie } = await published({ name: XSS_NAME })
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    expect(dialog).toContain(esc(XSS_NAME))
+    expect(dialog).not.toContain(XSS_NAME)
   })
 })
 

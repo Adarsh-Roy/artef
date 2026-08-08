@@ -22,6 +22,23 @@ export const ARTIFACT_CSP =
  *  needs none (§5.4). */
 export const ASSET_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'"
 
+/**
+ * The shell page itself. Not a sandbox — this page *is* ours, it holds the
+ * reader's session, and its inline script is what runs the live reload and the
+ * share dialog. What the policy buys is a floor under an injection: `default-src
+ * 'none'` means an escaped artifact name that slipped through `esc()` could not
+ * pull in a script, a stylesheet or an image from anywhere at all.
+ *
+ * Every source that is allowed is allowed because the page already uses it:
+ * `script-src`/`style-src 'unsafe-inline'` for the inline block and the inline
+ * `<style>`, `frame-src 'self'` for the artifact frame, `connect-src 'self'`
+ * for the EventSource and the dialog's fetches. `base-uri 'none'` is the one
+ * pure restriction — nothing here needs a `<base>`, and an injected one would
+ * repoint every relative URL on the page.
+ */
+export const SHELL_CSP =
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; base-uri 'none'"
+
 /** `/c/:id` — the artifact itself, framed by the shell page. */
 export function artifactPageHeaders(): Record<string, string> {
   return {
@@ -39,6 +56,7 @@ export function artifactPageHeaders(): Record<string, string> {
  *  for the next person on a shared machine. */
 export function shellPageHeaders(): Record<string, string> {
   return {
+    'Content-Security-Policy': SHELL_CSP,
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'private, no-store',

@@ -16,7 +16,7 @@ export interface ShellOpts {
   id: string
   name: string | null
   version: number
-  isPublic: boolean
+  visibility: 'private' | 'restricted' | 'workspace' | 'public'
   canShare: boolean
   /** The content token for the frame, or `null` for a public document, which
    *  needs none (§2.4). */
@@ -44,10 +44,11 @@ export function esc(s: string): string {
 
 export function renderShell(o: ShellOpts): string {
   const title = o.name ?? FALLBACK_TITLE
+  const isPublic = o.visibility === 'public'
   // Public documents reload by cache-busting on the version; everything else
   // carries the short-lived capability that is the only credential `/c/:id`
   // accepts (§2.4).
-  const src = o.isPublic
+  const src = isPublic
     ? `/c/${o.id}?v=${o.version}`
     : `/c/${o.id}?t=${encodeURIComponent(o.token ?? '')}`
 
@@ -78,8 +79,9 @@ ${ogTags(title, o.siteUrl, o.id)}
 <div class="actions">${share}${account}</div>
 </header>
 <iframe id="artifact-frame" title="${esc(title)}" sandbox="allow-scripts" src="${esc(src)}"></iframe>
-<div id="share-root"></div>
-<script>${liveScript(o)}</script>
+<div id="share-root">${shareDialog(o, title)}</div>
+<script>${liveScript(o, isPublic)}</script>
+${o.canShare ? `<script>${shareScript(o)}</script>` : ''}
 </body></html>`
 }
 
@@ -128,9 +130,9 @@ function ogTags(title: string, siteUrl: string, id: string): string {
  * public one needs no token and reloads with a cache-buster instead. Only the
  * branch that applies is emitted, so a public page never even mentions `?t=`.
  */
-function liveScript(o: ShellOpts): string {
-  const id = JSON.stringify(o.id)
-  const reload = o.isPublic
+function liveScript(o: ShellOpts, isPublic: boolean): string {
+  const id = jsString(o.id)
+  const reload = isPublic
     ? `frame.src = '/c/' + id + '?v=' + Date.now()`
     : `const r = await fetch('/api/artifacts/' + id + '/content-token')
       if (!r.ok) return
@@ -153,6 +155,216 @@ function liveScript(o: ShellOpts): string {
 `
 }
 
+// ---------------------------------------------------------------------------
+// The share dialog (§5.9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Google Docs' share dialog, because every person in the building has already
+ * used it: three radios for `visibility`, an email field that writes grant
+ * rows, a role dropdown per person, a copy-link button. Nothing else — this is
+ * the whole UI the product has, and the reason it can be one file of markup
+ * with no build step.
+ *
+ * Rendered only for the people who may act on it. An owner sees it, an admin
+ * sees it, and for everyone else `#share-root` stays the empty div it was.
+ */
+function shareDialog(o: ShellOpts, title: string): string {
+  if (!o.canShare) return ''
+
+  // `canShare` already means "in this artifact's workspace", so the domain is
+  // known; the fallback is there so a missing lookup degrades to vague copy
+  // rather than to the word "null" in the dialog.
+  const domain = o.workspaceDomain ?? 'your workspace'
+  const radio = (value: string, label: string) =>
+    `<label><input type="radio" name="visibility" value="${value}"${
+      o.visibility === value ? ' checked' : ''
+    }> ${esc(label)}</label>`
+
+  return `
+<dialog id="share-dialog" aria-labelledby="share-title">
+<h2 id="share-title">Share "${esc(title)}"</h2>
+<div class="choices">
+${radio('workspace', `Anyone at ${domain}`)}
+${radio('restricted', 'Only people I choose')}
+${radio('public', 'Anyone with the link')}
+</div>
+<p id="share-only-you"${o.visibility === 'private' ? '' : ' hidden'}>Only you</p>
+<div class="add">
+<label for="share-email">Add people</label>
+<input id="share-email" type="email" autocomplete="off" placeholder="email">
+<select id="share-role" aria-label="Role for the person being added">${ROLE_OPTIONS}</select>
+<button id="share-add" type="button">Add</button>
+</div>
+<ul id="share-people"></ul>
+<p id="share-status" role="status" hidden></p>
+<div class="foot">
+<button id="share-copy" type="button">Copy link</button>
+<button id="share-done" type="button">Done</button>
+</div>
+</dialog>`
+}
+
+/** "can update", never "can edit" — there is no browser editing, and a dialog
+ *  that promises a text cursor is worse than one with an awkward verb (§12.1). */
+const ROLE_OPTIONS = '<option value="viewer">can view</option><option value="editor">can update</option>'
+
+/**
+ * What makes the dialog work: four `fetch` calls against the artifact's own
+ * API, same-origin, with the list re-read from the server after every one of
+ * them. Nothing is patched into the DOM optimistically — if a grant failed, the
+ * list must show what the server actually holds rather than what was clicked.
+ *
+ * Every string that came from a person is written with `textContent`. The
+ * markup above goes through `esc()`; in here there is no innerHTML at all, so
+ * an email address is text and can never be markup.
+ */
+function shareScript(o: ShellOpts): string {
+  return `
+(() => {
+  const base = ${jsString(`/api/artifacts/${o.id}`)}
+  const link = ${jsString(`${o.siteUrl.replace(/\/+$/, '')}/${o.id}`)}
+  const dialog = document.getElementById('share-dialog')
+  const openButton = document.getElementById('share-button')
+  if (!dialog || !openButton) return
+  const people = document.getElementById('share-people')
+  const statusLine = document.getElementById('share-status')
+  const onlyYou = document.getElementById('share-only-you')
+  const emailInput = document.getElementById('share-email')
+  const roleSelect = document.getElementById('share-role')
+  const radios = dialog.querySelectorAll('input[name="visibility"]')
+  let visibility = ${jsString(o.visibility)}
+
+  const say = message => { statusLine.textContent = message; statusLine.hidden = message === '' }
+
+  /** The radios always show what the server holds, never what was clicked. */
+  function showVisibility(value) {
+    visibility = value
+    for (const radio of radios) radio.checked = radio.value === value
+    if (onlyYou) onlyYou.hidden = value !== 'private'
+  }
+
+  async function call(method, path, body) {
+    const res = await fetch(base + path, {
+      method: method,
+      credentials: 'same-origin',
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    if (res.status === 204) return null
+    if (res.ok) return res.json()
+    let message = 'Something went wrong. Try again.'
+    try { const failed = await res.json(); if (failed && failed.error) message = failed.error } catch (e) {}
+    throw new Error(message)
+  }
+
+  function personRow(grant) {
+    const row = document.createElement('li')
+    const who = document.createElement('span')
+    who.className = 'who'
+    who.textContent = grant.email
+    const role = document.createElement('select')
+    role.setAttribute('aria-label', 'Role for ' + grant.email)
+    for (const option of [['viewer', 'can view'], ['editor', 'can update']]) {
+      const choice = document.createElement('option')
+      choice.value = option[0]
+      choice.textContent = option[1]
+      choice.selected = grant.role === option[0]
+      role.appendChild(choice)
+    }
+    role.addEventListener('change', () => {
+      run(() => call('POST', '/grants', { email: grant.email, role: role.value }))
+    })
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'remove'
+    remove.textContent = '\\u00d7'
+    remove.setAttribute('aria-label', 'Remove ' + grant.email)
+    remove.addEventListener('click', () => {
+      run(() => call('DELETE', '/grants/' + encodeURIComponent(grant.user_id)))
+    })
+    row.append(who, role, remove)
+    return row
+  }
+
+  /**
+   * Do the thing, then re-read the list — whether the thing worked or not. A
+   * failed change must not leave the dialog showing a role the server refused,
+   * because the dialog is the only place anyone can see who has access.
+   */
+  async function run(action) {
+    say('')
+    try {
+      if (action) await action()
+    } catch (e) {
+      say(e.message)
+    }
+    try {
+      const grants = await call('GET', '/grants')
+      people.replaceChildren(...grants.map(personRow))
+    } catch (e) {
+      say(e.message)
+    }
+  }
+
+  function add() {
+    const email = emailInput.value.trim()
+    if (email === '') return
+    run(async () => {
+      await call('POST', '/grants', { email: email, role: roleSelect.value })
+      emailInput.value = ''
+      // A private document ignores grants entirely (§4.2), so naming someone
+      // while it is private would add a row that grants nothing. Naming a
+      // person IS choosing "only people I choose", and the radio moves to say so.
+      if (visibility === 'private') {
+        await call('PATCH', '', { visibility: 'restricted' })
+        showVisibility('restricted')
+      }
+    })
+  }
+
+  openButton.addEventListener('click', () => { if (!dialog.open) dialog.showModal(); run() })
+  document.getElementById('share-done').addEventListener('click', () => dialog.close())
+  document.getElementById('share-add').addEventListener('click', add)
+  emailInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add() } })
+
+  for (const radio of radios) {
+    radio.addEventListener('change', () => {
+      const wanted = radio.value
+      run(async () => {
+        try {
+          await call('PATCH', '', { visibility: wanted })
+        } catch (e) {
+          // Put the radios back to what the server still holds.
+          showVisibility(visibility)
+          throw e
+        }
+        showVisibility(wanted)
+      })
+    })
+  }
+
+  document.getElementById('share-copy').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(link)
+      say('Link copied.')
+    } catch (e) {
+      say('Could not copy automatically. The link is ' + link)
+    }
+  })
+})()
+`
+}
+
+/**
+ * A server value on its way into an inline `<script>`. `JSON.stringify` alone
+ * is not enough: the HTML parser ends the script at the first `</script`
+ * wherever it appears, string literal or not, so `<` is escaped as well.
+ */
+function jsString(s: string): string {
+  return JSON.stringify(s).replace(/</g, '\\u003c')
+}
+
 const PROSE_STYLE = `body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:2rem}
 main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem;overflow-wrap:anywhere}p{margin:0 0 1rem;color:#333}`
 
@@ -166,4 +378,20 @@ body{margin:0;font:14px/1.5 system-ui,sans-serif;display:flex;flex-direction:col
 .actions{margin-left:auto;display:flex;align-items:center;gap:.5rem}
 .actions button,.actions a{font:inherit;padding:.35rem .75rem;border:1px solid #ccc;border-radius:.375rem;background:#fff;color:#111;text-decoration:none;cursor:pointer}
 .logout{margin:0}
-#artifact-frame{flex:1;width:100%;border:0}`
+#artifact-frame{flex:1;width:100%;border:0}
+#share-dialog{width:min(28rem,92vw);padding:1.25rem;border:1px solid #ddd;border-radius:.5rem}
+#share-dialog::backdrop{background:rgba(0,0,0,.35)}
+#share-dialog h2{font-size:1rem;margin:0 0 .75rem;overflow-wrap:anywhere}
+#share-dialog label{display:block}
+#share-dialog .choices{display:grid;gap:.35rem;margin-bottom:.5rem}
+#share-only-you{margin:0 0 .5rem;color:#666}
+#share-dialog .add{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:.75rem 0;padding-top:.75rem;border-top:1px solid #eee}
+#share-dialog .add label{flex-basis:100%}
+#share-email{flex:1;min-width:10rem;font:inherit;padding:.35rem .5rem;border:1px solid #ccc;border-radius:.375rem}
+#share-people{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}
+#share-people li{display:flex;align-items:center;gap:.5rem}
+#share-people .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#share-people .remove{line-height:1}
+#share-status{margin:.75rem 0 0;color:#a11}
+#share-dialog .foot{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
+#share-dialog button,#share-dialog select{font:inherit;padding:.3rem .6rem;border:1px solid #ccc;border-radius:.375rem;background:#fff;color:#111;cursor:pointer}`
