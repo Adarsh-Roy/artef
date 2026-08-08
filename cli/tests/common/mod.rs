@@ -82,16 +82,35 @@ impl Cli {
         self.dir.path().join(".artef.json").exists()
     }
 
+    /// What the run left in `~/.config/artef/config.toml`, if it wrote one.
+    pub fn saved_config(&self) -> Option<String> {
+        std::fs::read_to_string(
+            self.dir
+                .path()
+                .join("home")
+                .join(".config")
+                .join("artef")
+                .join("config.toml"),
+        )
+        .ok()
+    }
+
     pub fn run(&self, server: &MockServer, args: &[&str]) -> Run {
-        self.run_inner(server, args, Some(TOKEN))
+        self.run_inner(Some(server.uri()), args, Some(TOKEN))
     }
 
     /// Run with no token configured anywhere, the way a fresh machine looks.
     pub fn run_without_token(&self, server: &MockServer, args: &[&str]) -> Run {
-        self.run_inner(server, args, None)
+        self.run_inner(Some(server.uri()), args, None)
     }
 
-    fn run_inner(&self, server: &MockServer, args: &[&str], token: Option<&str>) -> Run {
+    /// Run with nothing configured at all: no server, no token, no config file. This is
+    /// a machine that has never run `artef login`.
+    pub fn run_unconfigured(&self, args: &[&str]) -> Run {
+        self.run_inner(None, args, None)
+    }
+
+    fn run_inner(&self, server: Option<String>, args: &[&str], token: Option<&str>) -> Run {
         let home = self.dir.path().join("home");
         std::fs::create_dir_all(&home).expect("creating fake home");
 
@@ -99,11 +118,14 @@ impl Cli {
         command
             .current_dir(self.dir.path())
             .args(args)
-            .env("ARTEF_SERVER", server.uri())
             // Keep the run away from the developer's own ~/.config/artef/config.toml.
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env_remove("ARTEF_SERVER")
             .env_remove("ARTEF_TOKEN");
+        if let Some(server) = server {
+            command.env("ARTEF_SERVER", server);
+        }
         if let Some(token) = token {
             command.env("ARTEF_TOKEN", token);
         }

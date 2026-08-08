@@ -1,4 +1,5 @@
 pub mod lint;
+pub mod login;
 pub mod ls;
 pub mod open;
 pub mod pull;

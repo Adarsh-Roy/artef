@@ -264,6 +264,24 @@ impl ApiClient {
             .context("decoding the document")
     }
 
+    /// `GET /api/artifacts?limit=1` — the smallest call that proves a token works, which
+    /// is how `artef login --token` checks one before writing it to disk (spec §7.2).
+    pub async fn verify_token(&self) -> Result<()> {
+        let response = self
+            .http
+            .get(self.endpoint("api/artifacts?limit=1")?)
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .with_context(|| format!("reaching {}", self.base))?;
+
+        if response.status() == StatusCode::UNAUTHORIZED {
+            bail!("the server did not accept that token");
+        }
+        checked(response, "checking the token").await?;
+        Ok(())
+    }
+
     /// `GET /api/artifacts` — the first page of the workspace's artifacts.
     pub async fn list(&self) -> Result<Vec<ArtifactMeta>> {
         let response = self

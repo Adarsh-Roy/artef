@@ -22,7 +22,14 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Log in to an artef server and store a machine token.
-    Login,
+    Login {
+        /// Server to log in to, e.g. https://artef.company.com.
+        #[arg(long)]
+        server: Option<String>,
+        /// Use this machine token instead of opening a browser.
+        #[arg(long)]
+        token: Option<String>,
+    },
     /// Check a file against the artifact CSP without uploading it.
     Lint {
         /// HTML file to check.
@@ -185,7 +192,13 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::Open { target } => commands::open::run(&GlobalConfig::load()?, &target),
         Command::Pull { target } => commands::pull::run(&GlobalConfig::load()?, &target).await,
         Command::Rm { target } => commands::rm::run(&GlobalConfig::load()?, &target).await,
-        Command::Login => bail!("not yet implemented"),
+        Command::Login { server, token } => {
+            commands::login::run(&commands::login::Options {
+                server: server.as_deref(),
+                token: token.as_deref(),
+            })
+            .await
+        }
         Command::Watch { .. } => bail!("not yet implemented"),
         Command::Daemon => bail!("not yet implemented"),
     }
@@ -229,6 +242,28 @@ mod tests {
             "artef", "share", "some-id", "--public", "--email", "a@b.com"
         ])
         .is_err());
+    }
+
+    #[test]
+    fn login_takes_a_server_and_a_token() {
+        let cli = Cli::try_parse_from([
+            "artef",
+            "login",
+            "--server",
+            "https://artef.company.com",
+            "--token",
+            "art_live_xxxxxxxx",
+        ])
+        .unwrap();
+
+        let Command::Login { server, token } = cli.command else {
+            panic!("expected a login");
+        };
+        assert_eq!(server.as_deref(), Some("https://artef.company.com"));
+        assert_eq!(token.as_deref(), Some("art_live_xxxxxxxx"));
+
+        // Both are optional: the browser round-trip needs neither.
+        assert!(Cli::try_parse_from(["artef", "login"]).is_ok());
     }
 
     #[test]

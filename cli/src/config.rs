@@ -36,6 +36,20 @@ fn non_empty_env(key: &str) -> Option<String> {
     }
 }
 
+/// The server the user has actually named — the environment first, then the file.
+/// `None` means nobody has said which server to talk to.
+///
+/// Every other command falls back to [`DEFAULT_SERVER`], which is fine: the worst a
+/// guess costs them is a failed request. `artef login` uses this instead, because a
+/// guess there sends the user's browser — and the token it comes back with — to a
+/// server they never named.
+pub fn configured_server(path: &Path) -> Result<Option<String>> {
+    let file = read_file(path)?;
+    Ok(non_empty_env(SERVER_ENV)
+        .or(file.server)
+        .filter(|server| !server.trim().is_empty()))
+}
+
 /// Resolved settings: config file first, environment second (environment wins).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalConfig {
@@ -57,22 +71,8 @@ impl GlobalConfig {
         Self::load_from(&config_path()?)
     }
 
-    // Writing the config is `artef login`'s job (Task 15); reading it is every other
-    // command's.
-    #[allow(dead_code)]
-    pub fn save(&self) -> Result<()> {
-        self.save_to(&config_path()?)
-    }
-
     fn load_from(path: &Path) -> Result<Self> {
-        let file = match std::fs::read_to_string(path) {
-            Ok(raw) => toml::from_str::<ConfigFile>(&raw)
-                .with_context(|| format!("reading {}", path.display()))?,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => ConfigFile::default(),
-            Err(err) => {
-                return Err(err).with_context(|| format!("reading {}", path.display()));
-            }
-        };
+        let file = read_file(path)?;
 
         Ok(Self {
             server: non_empty_env(SERVER_ENV)
@@ -82,7 +82,9 @@ impl GlobalConfig {
         })
     }
 
-    fn save_to(&self, path: &Path) -> Result<()> {
+    /// Write the file. Writing it is `artef login`'s job; reading it is every other
+    /// command's.
+    pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
@@ -93,6 +95,17 @@ impl GlobalConfig {
         })?;
         std::fs::write(path, body).with_context(|| format!("writing {}", path.display()))?;
         restrict_permissions(path)
+    }
+}
+
+/// The file as it is on disk. A file that isn't there reads as an empty one — a machine
+/// that has never run `artef login` is not an error.
+fn read_file(path: &Path) -> Result<ConfigFile> {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => toml::from_str::<ConfigFile>(&raw)
+            .with_context(|| format!("reading {}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ConfigFile::default()),
+        Err(err) => Err(err).with_context(|| format!("reading {}", path.display())),
     }
 }
 
@@ -253,6 +266,34 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "mode was {:o}", mode & 0o777);
+    }
+
+    #[test]
+    fn nobody_naming_a_server_is_reported_as_nobody_naming_one() {
+        let _guard = env_guard();
+        let dir = tempfile::tempdir().unwrap();
+
+        // Nothing anywhere: the caller has to be told, not given a default.
+        assert_eq!(
+            configured_server(&dir.path().join("nope.toml")).unwrap(),
+            None
+        );
+
+        // A blank entry in the file is nobody naming one either.
+        let blank = write_config(&dir, "server = \"  \"\n");
+        assert_eq!(configured_server(&blank).unwrap(), None);
+
+        let path = write_config(&dir, "server = \"https://from-file.example.com\"\n");
+        assert_eq!(
+            configured_server(&path).unwrap().as_deref(),
+            Some("https://from-file.example.com")
+        );
+
+        std::env::set_var("ARTEF_SERVER", "https://from-env.example.com");
+        assert_eq!(
+            configured_server(&path).unwrap().as_deref(),
+            Some("https://from-env.example.com")
+        );
     }
 
     #[test]
