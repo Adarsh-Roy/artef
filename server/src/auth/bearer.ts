@@ -43,6 +43,9 @@ export function bearerMiddleware(deps: Deps): MiddlewareHandler<AppEnv> {
     // NULL means the token covers the whole workspace (spec §3). Enforcing the
     // scope is the artifact routes' job; carrying it is this middleware's.
     c.set('tokenScopeIds', token.scopeIds)
+    // The identity a per-token rate limit meters (spec §5.2): two agents
+    // sharing an owner still get a budget each.
+    c.set('tokenId', token.id)
 
     await touchLastUsed(deps, token)
     return next()

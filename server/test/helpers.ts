@@ -7,7 +7,8 @@ import type { Hono } from 'hono'
 import type { Config } from '../src/config.js'
 import { createDb, runMigrations } from '../src/db/client.js'
 import { machineTokens, users, workspaces } from '../src/db/schema.js'
-import { generateMachineToken, signSession } from '../src/lib/crypto.js'
+import { generateMachineToken, sha256Hex, signSession } from '../src/lib/crypto.js'
+import { gzipBuf } from '../src/lib/gzip.js'
 import { createApp, type AppEnv, type Deps } from '../src/app.js'
 import { SESSION_COOKIE, SESSION_TTL_DAYS } from '../src/auth/session.js'
 
@@ -54,11 +55,16 @@ function connect() {
   return connection
 }
 
+export type TestDeps = Deps & { app: Hono<AppEnv> }
+
 export async function testDeps(
   cfgOverrides: Partial<Config> = {},
-): Promise<Deps & { app: Hono<AppEnv> }> {
+  // The clock and the notifier are the two dependencies a test may need to
+  // control, so they are passed in rather than reached for.
+  extra: Partial<Pick<Deps, 'notifier' | 'now'>> = {},
+): Promise<TestDeps> {
   const { db, pool } = await connect()
-  const deps: Deps = { cfg: testConfig(cfgOverrides), db, pool }
+  const deps: Deps = { cfg: testConfig(cfgOverrides), db, pool, ...extra }
   return { ...deps, app: createApp(deps) }
 }
 
@@ -157,4 +163,29 @@ export async function makeMachineToken(
     .returning()
 
   return { token, row, header: { Authorization: `Bearer ${token}` } }
+}
+
+/**
+ * A `PUT .../content` shaped exactly the way the CLI shapes it (spec §5.2): the
+ * body gzipped, and `If-None-Match` carrying the sha256 of the *uncompressed*
+ * bytes. `headers` is applied last, so a test can override or blank out any of
+ * it — an empty `If-None-Match` reads as no header at all.
+ */
+export async function pushHtml(
+  deps: TestDeps,
+  auth: Record<string, string>,
+  id: string,
+  html: string,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return deps.app.request(`/api/artifacts/${id}/content`, {
+    method: 'PUT',
+    headers: {
+      ...auth,
+      'Content-Encoding': 'gzip',
+      'If-None-Match': `"${sha256Hex(html)}"`,
+      ...headers,
+    },
+    body: new Uint8Array(gzipBuf(html)),
+  })
 }

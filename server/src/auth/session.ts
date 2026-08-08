@@ -40,6 +40,7 @@ export function sessionMiddleware(deps: Deps): MiddlewareHandler<AppEnv> {
     c.set('user', null)
     c.set('authKind', null)
     c.set('tokenScopeIds', null)
+    c.set('tokenId', null)
 
     // getCookie returns undefined when the header is absent, and verifySession
     // takes a string — so the guard belongs here, before the call.

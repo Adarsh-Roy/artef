@@ -13,6 +13,7 @@ import { registerAuthRoutes } from './auth/oidc.js'
 import { originCheck } from './auth/origin.js'
 import { sessionMiddleware } from './auth/session.js'
 import { registerArtifactRoutes } from './routes/artifacts.js'
+import { registerContentRoutes } from './routes/content.js'
 import { registerTokenRoutes } from './routes/tokens.js'
 
 /** Live-update fan-out (spec §5.5). Optional until the SSE milestone builds it. */
@@ -25,6 +26,9 @@ export interface Deps {
   db: NodePgDatabase<typeof schema>
   pool: pg.Pool
   notifier?: Notifier
+  /** Wall clock, injectable so time-windowed behaviour (the write rate limit)
+   *  can be tested without sleeping. Defaults to `Date.now`. */
+  now?: () => number
 }
 
 /** Request-scoped identity, set by the auth middleware and read by every route. */
@@ -33,6 +37,9 @@ export type AppEnv = {
     user: typeof users.$inferSelect | null
     authKind: 'session' | 'bearer' | null
     tokenScopeIds: string[] | null
+    /** The machine token this request arrived on, or null for a browser
+     *  session — the rate limiter meters an agent, not the person who owns it. */
+    tokenId: string | null
   }
 }
 
@@ -69,7 +76,12 @@ export function createApp(deps: Deps): Hono<AppEnv> {
 
   registerAuthRoutes(app, deps)
   registerTokenRoutes(app, deps)
+  // After the artifact routes, which is what puts the content endpoints behind
+  // the `/api/artifacts/:id/*` token-scope middleware registered there — hono
+  // runs middleware in registration order, so a route registered first would
+  // never see it.
   registerArtifactRoutes(app, deps)
+  registerContentRoutes(app, deps)
 
   // Spec §10: 200 exactly when the database is reachable.
   app.get('/_health', async c => {
