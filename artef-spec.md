@@ -596,6 +596,15 @@ artef rm <id>
 
 **`artef login` is a browser round-trip against the artef server, not an IdP device-code flow.** The credential the CLI needs is an artef machine token, not an IdP token. `artef login` starts a localhost listener, opens `https://<server>/cli/auth?port=…&state=…`, the user completes normal SSO in the browser, and the server mints a machine token and hands it to the loopback redirect. If the loopback can't be reached (SSH session), the page shows the token for copy-paste. Headless environments skip all of it with `--token`.
 
+### 7.2b Skill auto-registration
+
+The agent skill (§7.1) is only useful if it is actually installed where agents look, and nobody runs a manual install step. So the CLI carries the skill embedded in the binary (compiled in from `skill/SKILL.md` at build time — one more thing the monorepo makes free) and registers it automatically:
+
+- One canonical copy lives at `~/.config/artef/skills/artef-html/SKILL.md`, written by the CLI and kept in sync with the embedded version.
+- Each **detected** harness gets a symlink to that directory. Detection is by directory existence — the CLI never creates a harness's config tree on a machine that doesn't have the harness. Supported now: Claude Code (`~/.claude/skills/artef-html`) and OpenAI Codex (`~/.codex/skills/artef-html`); both consume the same Agent Skills format, and the registry is a table so more harnesses are one row each.
+- Runs opportunistically at the start of any CLI command: a cheap up-to-date check, silent when nothing to do, one stderr line when it installs or updates. `ARTEF_NO_SKILL_INSTALL=1` (or `skill_autoinstall = false` in the config file) turns it off. `artef skill install|status|uninstall` is the explicit interface.
+- Where a symlink can't be made (Windows without privileges), fall back to copying with a marker file so updates know the directory is ours. A pre-existing `artef-html` directory that is *not* ours is never touched — warn and skip.
+
 ### 7.3 Local state
 
 `.artef.json` in the working directory, committed or gitignored as the user prefers:
