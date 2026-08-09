@@ -2,4 +2,9 @@ node_modules/
 dist/
 target/
 .env
+.env.*
 *.log
+
+# Local runtime / editor scratch — never part of the repo
+.claude/
+server/seed-demo.ts
