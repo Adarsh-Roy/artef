@@ -359,10 +359,15 @@ fn symlink_dir(canonical: &Path, target: &Path) -> std::io::Result<()> {
 const MARKER_NOTE: &str = "This directory is managed by artef and is refreshed by the artef CLI.\nRemove it with `artef skill uninstall`.\n";
 
 /// The fallback install: the skill plus the marker that says the directory is ours.
+///
+/// The marker goes down first. A copy interrupted halfway then reads as an out-of-date
+/// copy of ours, which the next run repairs; the other order would leave a directory
+/// with our skill in it and no marker, which every later run would treat as somebody
+/// else's and refuse to touch for good.
 fn write_copy(target: &Path) -> Result<()> {
     std::fs::create_dir_all(target).with_context(|| format!("creating {}", target.display()))?;
-    write_atomically(&target.join(SKILL_FILE), SKILL_MD)?;
-    write_atomically(&target.join(MARKER), MARKER_NOTE)
+    write_atomically(&target.join(MARKER), MARKER_NOTE)?;
+    write_atomically(&target.join(SKILL_FILE), SKILL_MD)
 }
 
 /// Delete one of our registrations, whichever shape it took.
@@ -581,6 +586,38 @@ mod tests {
         );
         // Still a copy — we don't swap someone's working install out from under them.
         assert!(!std::fs::symlink_metadata(&target).unwrap().is_symlink());
+    }
+
+    #[test]
+    fn a_copy_that_was_interrupted_halfway_is_finished_rather_than_disowned() {
+        let (_dir, layout) = machine();
+        with_harness(&layout, ".claude");
+        let target = layout.home.join(".claude").join("skills").join(SKILL_DIR);
+        // What a run killed between the two writes leaves behind: the marker, no skill.
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join(MARKER), MARKER_NOTE).unwrap();
+
+        let outcome = install(&layout).unwrap();
+
+        assert_eq!(state_of(&outcome, "claude"), State::Registered);
+        assert_eq!(
+            std::fs::read_to_string(target.join(SKILL_FILE)).unwrap(),
+            SKILL_MD
+        );
+    }
+
+    #[test]
+    fn a_copy_marks_itself_as_ours_before_it_writes_the_skill() {
+        let (_dir, layout) = machine();
+        let target = layout.home.join("copy-mode");
+
+        write_copy(&target).unwrap();
+
+        assert!(target.join(MARKER).is_file());
+        assert_eq!(
+            std::fs::read_to_string(target.join(SKILL_FILE)).unwrap(),
+            SKILL_MD
+        );
     }
 
     #[test]

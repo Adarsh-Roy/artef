@@ -173,12 +173,12 @@ impl Role {
 async fn main() {
     let cli = Cli::parse();
     // The skill installs itself on the way past (spec §7.2b) — silent when it has
-    // nothing to do, and never fatal. Uninstalling is the one command that would
-    // fight with it.
+    // nothing to do, and never fatal. Uninstalling would fight with it, and status
+    // reports what is on the machine, so neither gets the automatic pass.
     if !matches!(
         cli.command,
         Command::Skill {
-            action: SkillAction::Uninstall
+            action: SkillAction::Uninstall | SkillAction::Status
         }
     ) {
         skill_reg::run_auto();

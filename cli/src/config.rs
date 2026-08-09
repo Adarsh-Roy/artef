@@ -99,20 +99,53 @@ impl GlobalConfig {
     /// command's.
     ///
     /// Only the keys logging in owns — the server and the token — are written from
-    /// `self`. Everything else already in the file is carried over untouched, so
-    /// logging in never quietly undoes a setting the user typed there by hand.
+    /// `self`. The file is merged as a plain TOML table rather than through this
+    /// struct, so every other key survives: the ones this version knows about, the
+    /// ones a later version will add, and anything the user typed there by hand.
     pub fn save_to(&self, path: &Path) -> Result<()> {
+        self.save_reporting_to(path, &mut std::io::stderr())
+    }
+
+    fn save_reporting_to(&self, path: &Path, warn: &mut impl std::io::Write) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
-        let mut file = read_file(path).unwrap_or_default();
-        file.server = Some(self.server.clone());
-        file.token = self.token.clone();
 
-        let body = toml::to_string_pretty(&file)?;
+        let mut table = existing_table(path, warn)?;
+        table.insert("server".to_string(), self.server.clone().into());
+        match &self.token {
+            Some(token) => table.insert("token".to_string(), token.clone().into()),
+            None => table.remove("token"),
+        };
+
+        let body = toml::to_string_pretty(&table)?;
         std::fs::write(path, body).with_context(|| format!("writing {}", path.display()))?;
         restrict_permissions(path)
+    }
+}
+
+/// The file as a plain table, for merging into. A file that isn't there is an empty
+/// table; a file we cannot parse is replaced, because refusing to log in over a broken
+/// config would leave the user stuck — but never silently, so they can put back
+/// whatever was in there.
+fn existing_table(path: &Path, warn: &mut impl std::io::Write) -> Result<toml::Table> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
+        Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
+    };
+    match raw.parse::<toml::Table>() {
+        Ok(table) => Ok(table),
+        Err(err) => {
+            writeln!(
+                warn,
+                "warning: {} is not valid TOML ({err}) — replacing it",
+                path.display()
+            )
+            .ok();
+            Ok(toml::Table::new())
+        }
     }
 }
 
@@ -344,6 +377,60 @@ mod tests {
         assert_eq!(
             GlobalConfig::load_from(&path).unwrap().server,
             "https://a.example.com"
+        );
+    }
+
+    #[test]
+    fn saving_keeps_keys_this_version_has_never_heard_of() {
+        let _guard = env_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(
+            &dir,
+            "server = \"https://old.example.com\"\nfuture_flag = \"x\"\n\n[future_section]\nkey = 1\n",
+        );
+
+        let mut warnings = Vec::new();
+        GlobalConfig {
+            server: "https://new.example.com".to_string(),
+            token: Some("art_live_xxxxxxxx".to_string()),
+            skill_autoinstall: true,
+        }
+        .save_reporting_to(&path, &mut warnings)
+        .unwrap();
+
+        let saved: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(saved["future_flag"].as_str(), Some("x"));
+        assert_eq!(saved["future_section"]["key"].as_integer(), Some(1));
+        assert_eq!(saved["server"].as_str(), Some("https://new.example.com"));
+        assert_eq!(saved["token"].as_str(), Some("art_live_xxxxxxxx"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn a_file_we_cannot_parse_is_replaced_out_loud() {
+        let _guard = env_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(&dir, "server = not-a-toml-value\n");
+
+        let mut warnings = Vec::new();
+        GlobalConfig {
+            server: "https://artef.company.com".to_string(),
+            token: Some("art_live_xxxxxxxx".to_string()),
+            skill_autoinstall: true,
+        }
+        .save_reporting_to(&path, &mut warnings)
+        .unwrap();
+
+        let warnings = String::from_utf8(warnings).unwrap();
+        assert!(warnings.contains("config.toml"), "warning was {warnings:?}");
+        assert!(
+            warnings.contains("replacing it"),
+            "warning was {warnings:?}"
+        );
+        // Logging in still worked: a broken file must not lock the user out.
+        assert_eq!(
+            GlobalConfig::load_from(&path).unwrap().token.as_deref(),
+            Some("art_live_xxxxxxxx")
         );
     }
 

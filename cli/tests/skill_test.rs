@@ -100,6 +100,26 @@ fn both_harnesses_get_a_symlink_when_both_are_installed() {
 }
 
 #[test]
+fn status_reports_the_machine_without_changing_it() {
+    let cli = Cli::new();
+    let home = cli.home();
+    cli.mkdir_home(".claude");
+
+    let status = cli.run_unconfigured(&["skill", "status"]);
+    status.ok();
+
+    // Not even the automatic pass runs: asking what is installed installs nothing.
+    assert!(!canonical(&home).exists(), "status wrote the skill");
+    assert!(
+        !home.join(".claude").join("skills").exists(),
+        "status created a directory"
+    );
+    assert_eq!(line(&status.stdout, "claude:"), "claude: not registered");
+    assert_eq!(line(&status.stdout, "codex:"), "codex: not detected");
+    assert_eq!(status.stderr, "");
+}
+
+#[test]
 fn an_out_of_date_canonical_copy_is_rewritten() {
     let cli = Cli::new();
     let home = cli.home();
