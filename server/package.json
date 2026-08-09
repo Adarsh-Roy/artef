@@ -11,10 +11,13 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "drizzle-orm": "^0.38.2",
     "hono": "^4.6.14",
+    "node-html-parser": "^9.0.1",
     "openid-client": "^6.1.7",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "zod": "^4.4.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]

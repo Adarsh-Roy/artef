@@ -19,6 +19,7 @@ import { registerCliAuthRoutes } from './routes/cliauth.js'
 import { registerContentRoutes } from './routes/content.js'
 import { registerEventRoutes } from './routes/events.js'
 import { registerGrantRoutes } from './routes/grants.js'
+import { registerMcpRoutes } from './routes/mcp.js'
 import { registerTokenRoutes } from './routes/tokens.js'
 import { registerViewerRoutes } from './viewer/routes.js'
 
@@ -53,17 +54,23 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   app.use('*', sessionMiddleware(deps))
-  // Scoped to /api because that is where the spec draws the bearer line (§5),
-  // and a dead token must not shut a caller out of everything else: /_health has
-  // to answer for the database alone (§10), and /auth/* is where a client whose
-  // token just died goes to get a new one.
+  // Scoped to the two doors agents come through — /api, where the spec draws
+  // the bearer line (§5), and /mcp, which is the same credential over a
+  // different protocol (§7.0). A dead token must not shut a caller out of
+  // everything else: /_health has to answer for the database alone (§10), and
+  // /auth/* is where a client whose token just died goes to get a new one.
   //
   // Order is load-bearing: bearer runs after the session so a token wins over a
   // stray cookie, and before the origin check so `authKind` is already 'bearer'
   // when that check decides whether an Origin header is required.
   app.use('/api/*', bearerMiddleware(deps))
+  app.use('/mcp', bearerMiddleware(deps))
   // Mounted before any route so it also covers /api paths that do not exist
   // yet — a state-changing request must never reach a handler unchecked.
+  //
+  // /mcp is not under it and does not need to be: the route refuses anything
+  // that did not arrive on a bearer token, and this check exempts those by
+  // design — nothing in a browser can make it attach a token it does not have.
   app.use('/api/*', originCheck(deps.cfg))
 
   // A path that matches no route is an error like any other, so it answers in
@@ -94,6 +101,13 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   registerEventRoutes(app, deps)
   registerGrantRoutes(app, deps)
   registerAssetRoutes(app, deps)
+  // The MCP tools are adapters: each one dispatches back into this same app
+  // over `app.request` (§7.0). That works from anywhere in this list — a tool
+  // only runs long after `createApp` has returned and registered everything —
+  // but it is written after the routes it calls because that is the order it
+  // reads in. What does matter is that it comes before the viewer below, whose
+  // `GET /:id` would otherwise be asked about `/mcp` first.
+  registerMcpRoutes(app, deps)
   // Last, because `GET /:id` matches any single path segment. It hands anything
   // that is not shaped like an artifact id straight on to the next handler, so
   // registration order is not what keeps /_health working — but a route that

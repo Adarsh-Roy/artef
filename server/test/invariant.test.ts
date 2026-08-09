@@ -287,6 +287,18 @@ describe('the whole route table', () => {
     'GET /cli/auth',
     'GET /cli/auth/manual',
     'HEAD /api/artifacts/:id/content',
+    // The MCP front door (§7.0). One entry, because the bearer middleware and
+    // the handler are both registered on the same exact path.
+    //
+    // **It does not serve user bytes and so is not in the byte-route list.**
+    // Everything that crosses it is JSON-RPC: an agent's tool call in, a JSON
+    // envelope out. `get_content` does hand back a document, but as a JSON
+    // string inside a tool result with `Content-Type: application/json` — never
+    // as a `text/html` response a browser would render, which is the only thing
+    // the sandbox CSP exists to stop. The tools reach the stored bytes by
+    // calling this app's own `/api` routes, which carry the sandbox headers
+    // themselves and are checked above.
+    'ALL /mcp',
     'PATCH /api/artifacts/:id',
     'POST /api/artifacts',
     'POST /api/artifacts/:id/grants',
