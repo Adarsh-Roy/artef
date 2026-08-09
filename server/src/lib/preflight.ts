@@ -81,12 +81,25 @@ export function preflight(html: string): PreflightResult {
   const reject = (rule: string, what: string, detail: string) => rejects.push({ rule, what, detail })
   const warn = (rule: string, what: string, detail: string) => warns.push({ rule, what, detail })
 
-  // `script` and `style` keep their contents as raw text, because that is what
-  // a browser does with them and what the scanners below need. Everything else
-  // is parsed as markup — including `<noscript>` and `<pre>`, whose children a
-  // browser running scripts under `allow-scripts` will happily load.
+  // The parse has to draw the raw-text/markup line exactly where the HTML5
+  // tokenizer draws it, or this preflight and the Rust lint (`artef lint`,
+  // which is lol_html and so the tokenizer itself) disagree about real
+  // documents — the one thing the two surfaces must never do.
+  //
+  // In `blockTextElements`, a listed tag is a *raw-text* element: its contents
+  // are text, and the tree has no child elements to scan. `script` and `style`
+  // are that in every parser, and their text is scanned separately below.
+  // `textarea` and `title` are RCDATA — inert text in a browser, so a `<script>`
+  // or `<img>` written inside one is never fetched — and must be raw-text here
+  // too, or a document a browser treats as clean would be rejected. `noscript`
+  // is raw-text under scripting, which is how these documents run.
+  //
+  // `pre` is deliberately absent: it is a *normal* element, its children are
+  // markup, and a browser running under `allow-scripts` loads a `<script src>`
+  // or `<img>` inside it. Listing it would discard exactly the references the
+  // CSP blocks, passing documents the Rust lint rejects.
   const root = parse(html, {
-    blockTextElements: { script: true, style: true, noscript: false, pre: false },
+    blockTextElements: { script: true, style: true, textarea: false, title: false, noscript: false },
   })
 
   walk(root, el => {

@@ -107,6 +107,18 @@ describe('the preflight table', () => {
     ['relative url() in css is fine', '<div style="background:url(/assets/abc)"></div>', []],
     ['inline style stays clean', '<style>body{color:red}</style>', []],
 
+    // --- where the raw-text/markup line falls, in step with the Rust lint ---
+    // `<pre>` is a normal element: a browser parses its children as markup and,
+    // under `allow-scripts`, loads a `<script src>` or `<img>` inside it. Both
+    // must be seen, or `/mcp` would publish a document `artef lint` refuses.
+    ['external img inside <pre> is a real reference', '<pre><img src="https://x/y.png"></pre>', ['R img-src']],
+    ['external script inside <pre> is a real reference', '<pre><script src="https://x/a.js"></script></pre>', ['R script-src']],
+    // `<textarea>` and `<title>` are RCDATA: their contents are inert text in a
+    // browser, so a tag written inside one is never a live element and never
+    // fetched. The Rust lint passes both, and so must this.
+    ['a script written inside <textarea> is inert text', '<textarea><script src="https://x/a.js"></script></textarea>', []],
+    ['an img written inside <title> is inert text', '<title><img src="https://x/y.png"></title>', []],
+
     // --- warnings ---
     ['fetch in an inline script', "<script>fetch('/a')</script>", ['W connect-src']],
     ['the other blocked network APIs', "<script>new XMLHttpRequest(); new EventSource('/e'); new WebSocket('/w');</script>", ['W connect-src', 'W connect-src', 'W connect-src']],
