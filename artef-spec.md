@@ -550,7 +550,24 @@ Use `lol_html` (Cloudflare, BSD-3, Rust) for streaming rewrites in the CLI, or `
 
 ---
 
-## 7. CLI
+## 7. Agent Integration
+
+### 7.0 MCP first, CLI for what MCP can't do
+
+The front door for agents is an **MCP server** mounted at `/mcp` on the same image and origin (Streamable HTTP, stateless). An agent connects with one config entry and discovers typed tools — no binary install, no local state file, no exit codes to interpret:
+
+- `publish_artifact { html, name?, visibility? }` → `{ id, url, version }`
+- `update_artifact { id, html, base_version? }` → `{ version }` (conflict → structured error with the current version)
+- `get_artifact { id }`, `get_content { id }`, `list_artifacts {}`
+- `set_visibility { id, visibility }` and `grant_access { id, email, role }` — so "publish this and share it with the platform team" is one exchange, not a publish plus a trip to a UI.
+
+**The decisive advantage is structured validation.** Publishing runs the §7.1 CSP preflight server-side, and a rejection comes back as data — the offending element, the rule it broke, the fix — so the agent repairs its own HTML and retries without a human reading stderr. (This requires a server-side TypeScript implementation of the preflight rules; the Rust lint stays authoritative for the CLI path.)
+
+**Auth is the existing machine token.** `/mcp` accepts the same `Authorization: Bearer art_…` header as `/api` — same storage (hash-only), same scoping, same revocation. `artef login` is the provisioning step for both. MCP's OAuth flow can later wrap the same `/cli/auth` approval page; v1 adds no new auth machinery.
+
+**The CLI stays** for the two jobs MCP structurally cannot do: the `watch`/`daemon` loop (a long-lived local process regenerating and pushing on an interval) and CI pipelines (a static binary on a build agent beats a protocol client). It also remains the skill installer (§7.2b).
+
+### 7.0b CLI
 
 Rust + `clap`, distributed as a single static binary (`curl | sh`, Homebrew, `cargo install`). No runtime dependency is a genuine selling point for a tool that has to run on random build agents.
 
