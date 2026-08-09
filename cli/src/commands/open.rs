@@ -46,6 +46,7 @@ mod tests {
         GlobalConfig {
             server: "https://artef.company.com".to_string(),
             token: None,
+            skill_autoinstall: true,
         }
     }
 

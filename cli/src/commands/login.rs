@@ -127,6 +127,9 @@ fn finish(out: &mut impl Write, config_path: &Path, server: &str, token: &str) -
     GlobalConfig {
         server: server.to_string(),
         token: Some(token.to_string()),
+        // `save_to` writes the server and the token and leaves the rest of the file
+        // alone, so this value is never the one that lands on disk.
+        skill_autoinstall: true,
     }
     .save_to(config_path)?;
 

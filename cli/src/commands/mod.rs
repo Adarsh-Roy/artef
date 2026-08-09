@@ -6,6 +6,7 @@ pub mod pull;
 pub mod push;
 pub mod rm;
 pub mod share;
+pub mod skill;
 pub mod watch;
 
 use std::path::Path;

@@ -14,7 +14,13 @@ const TOKEN_ENV: &str = "ARTEF_TOKEN";
 /// Where the config file lives: `~/.config/artef/config.toml` (spec §7.3), or the
 /// platform config directory on Windows.
 pub fn config_path() -> Result<PathBuf> {
-    Ok(config_dir()?.join("artef").join("config.toml"))
+    Ok(artef_dir()?.join("config.toml"))
+}
+
+/// Everything artef keeps for the user: `~/.config/artef`. The config file lives here,
+/// and so does the canonical copy of the agent skill (spec §7.2b).
+pub fn artef_dir() -> Result<PathBuf> {
+    Ok(config_dir()?.join("artef"))
 }
 
 fn config_dir() -> Result<PathBuf> {
@@ -55,15 +61,21 @@ pub fn configured_server(path: &Path) -> Result<Option<String>> {
 pub struct GlobalConfig {
     pub server: String,
     pub token: Option<String>,
+    /// Whether ordinary commands may register the agent skill on their way past
+    /// (spec §7.2b). On unless the file says `skill_autoinstall = false`.
+    pub skill_autoinstall: bool,
 }
 
-/// The file on disk. Both keys are optional so a partial file still loads.
+/// The file on disk. Every key is optional so a partial file still loads, and keys we
+/// don't know about are ignored rather than refused.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ConfigFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     server: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skill_autoinstall: Option<bool>,
 }
 
 impl GlobalConfig {
@@ -79,20 +91,26 @@ impl GlobalConfig {
                 .or(file.server)
                 .unwrap_or_else(|| DEFAULT_SERVER.to_string()),
             token: non_empty_env(TOKEN_ENV).or(file.token),
+            skill_autoinstall: file.skill_autoinstall.unwrap_or(true),
         })
     }
 
     /// Write the file. Writing it is `artef login`'s job; reading it is every other
     /// command's.
+    ///
+    /// Only the keys logging in owns — the server and the token — are written from
+    /// `self`. Everything else already in the file is carried over untouched, so
+    /// logging in never quietly undoes a setting the user typed there by hand.
     pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
-        let body = toml::to_string_pretty(&ConfigFile {
-            server: Some(self.server.clone()),
-            token: self.token.clone(),
-        })?;
+        let mut file = read_file(path).unwrap_or_default();
+        file.server = Some(self.server.clone());
+        file.token = self.token.clone();
+
+        let body = toml::to_string_pretty(&file)?;
         std::fs::write(path, body).with_context(|| format!("writing {}", path.display()))?;
         restrict_permissions(path)
     }
@@ -225,6 +243,7 @@ mod tests {
         let cfg = GlobalConfig {
             server: "https://artef.company.com".to_string(),
             token: Some("art_live_xxxxxxxx".to_string()),
+            skill_autoinstall: true,
         };
 
         cfg.save_to(&path).unwrap();
@@ -240,6 +259,7 @@ mod tests {
         let cfg = GlobalConfig {
             server: "https://artef.company.com".to_string(),
             token: None,
+            skill_autoinstall: true,
         };
 
         cfg.save_to(&path).unwrap();
@@ -260,6 +280,7 @@ mod tests {
         let cfg = GlobalConfig {
             server: "https://artef.company.com".to_string(),
             token: Some("art_live_xxxxxxxx".to_string()),
+            skill_autoinstall: true,
         };
 
         cfg.save_to(&path).unwrap();
@@ -293,6 +314,62 @@ mod tests {
         assert_eq!(
             configured_server(&path).unwrap().as_deref(),
             Some("https://from-env.example.com")
+        );
+    }
+
+    #[test]
+    fn skill_autoinstall_is_on_unless_the_file_turns_it_off() {
+        let _guard = env_guard();
+        let dir = tempfile::tempdir().unwrap();
+
+        // Nothing said: on (spec §7.2b).
+        assert!(
+            GlobalConfig::load_from(&dir.path().join("nope.toml"))
+                .unwrap()
+                .skill_autoinstall
+        );
+        let path = write_config(&dir, "server = \"https://artef.company.com\"\n");
+        assert!(GlobalConfig::load_from(&path).unwrap().skill_autoinstall);
+
+        let path = write_config(&dir, "skill_autoinstall = false\n");
+        assert!(!GlobalConfig::load_from(&path).unwrap().skill_autoinstall);
+    }
+
+    #[test]
+    fn a_key_we_do_not_know_does_not_stop_the_file_loading() {
+        let _guard = env_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(&dir, "server = \"https://a.example.com\"\nfuture = 3\n");
+
+        assert_eq!(
+            GlobalConfig::load_from(&path).unwrap().server,
+            "https://a.example.com"
+        );
+    }
+
+    #[test]
+    fn saving_leaves_settings_logging_in_does_not_own_alone() {
+        let _guard = env_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_config(
+            &dir,
+            "server = \"https://old.example.com\"\nskill_autoinstall = false\n",
+        );
+
+        GlobalConfig {
+            server: "https://new.example.com".to_string(),
+            token: Some("art_live_xxxxxxxx".to_string()),
+            skill_autoinstall: true,
+        }
+        .save_to(&path)
+        .unwrap();
+
+        let saved = GlobalConfig::load_from(&path).unwrap();
+        assert_eq!(saved.server, "https://new.example.com");
+        assert_eq!(saved.token.as_deref(), Some("art_live_xxxxxxxx"));
+        assert!(
+            !saved.skill_autoinstall,
+            "logging in wiped a setting it does not own"
         );
     }
 

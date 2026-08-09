@@ -4,6 +4,7 @@ mod config;
 mod extract;
 mod interval;
 mod lint;
+mod skill_reg;
 mod state;
 
 use std::path::PathBuf;
@@ -102,6 +103,33 @@ enum Command {
     },
     /// Run every [[watch]] entry in artef.toml.
     Daemon,
+    /// Manage the agent skill artef installs for the AI harnesses on this machine.
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+}
+
+/// The explicit side of skill registration (spec §7.2b) — every other command does it
+/// automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
+enum SkillAction {
+    /// Install or refresh the skill for every harness on this machine.
+    Install,
+    /// Show what is installed where.
+    Status,
+    /// Remove the skill from every harness, and the copy they point at.
+    Uninstall,
+}
+
+impl SkillAction {
+    fn as_action(self) -> commands::skill::Action {
+        match self {
+            Self::Install => commands::skill::Action::Install,
+            Self::Status => commands::skill::Action::Status,
+            Self::Uninstall => commands::skill::Action::Uninstall,
+        }
+    }
 }
 
 /// Who can reach an artifact (spec §3).
@@ -144,6 +172,17 @@ impl Role {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    // The skill installs itself on the way past (spec §7.2b) — silent when it has
+    // nothing to do, and never fatal. Uninstalling is the one command that would
+    // fight with it.
+    if !matches!(
+        cli.command,
+        Command::Skill {
+            action: SkillAction::Uninstall
+        }
+    ) {
+        skill_reg::run_auto();
+    }
     match run(cli).await {
         Ok(code) => std::process::exit(code),
         Err(err) => {
@@ -219,6 +258,7 @@ async fn run(cli: Cli) -> Result<i32> {
             .await
         }
         Command::Daemon => commands::watch::run_daemon(&GlobalConfig::load()?).await,
+        Command::Skill { action } => commands::skill::run(action.as_action()),
     }
 }
 
@@ -238,6 +278,7 @@ mod tests {
         let names: Vec<&str> = cmd.get_subcommands().map(|s| s.get_name()).collect();
         for expected in [
             "login", "lint", "push", "ls", "share", "open", "pull", "rm", "watch", "daemon",
+            "skill",
         ] {
             assert!(names.contains(&expected), "missing subcommand {expected}");
         }

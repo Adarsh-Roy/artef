@@ -95,8 +95,36 @@ impl Cli {
         .ok()
     }
 
+    /// The fake home directory this run sees as `$HOME`, created if it isn't there yet.
+    pub fn home(&self) -> PathBuf {
+        let home = self.dir.path().join("home");
+        std::fs::create_dir_all(&home).expect("creating fake home");
+        home
+    }
+
+    /// Make a directory under the fake home, e.g. `.claude/skills`.
+    pub fn mkdir_home(&self, relative: &str) -> PathBuf {
+        let path = self.home().join(relative);
+        std::fs::create_dir_all(&path).expect("creating a directory under the fake home");
+        path
+    }
+
     pub fn run(&self, server: &MockServer, args: &[&str]) -> Run {
         self.run_inner(Some(server.uri()), args, Some(TOKEN))
+    }
+
+    /// Run with nothing configured, plus some extra environment variables.
+    pub fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Run {
+        let mut command = self.command(None, args, None);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let out = command.output().expect("running artef");
+        Run {
+            code: out.status.code(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }
     }
 
     /// Run with no token configured anywhere, the way a fresh machine looks.
