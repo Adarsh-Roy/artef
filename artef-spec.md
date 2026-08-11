@@ -438,6 +438,12 @@ DELETE /api/artifacts/:id/grants/:user_id             →  204
 GET    /api/artifacts/:id/grants                      →  200 [...]
 ```
 
+```
+GET    /api/users/search?q=<prefix>&limit=  →  200 [ { email, name } ]
+```
+
+Session-authed, workspace-scoped, prefix-matched on name or email, capped at ten. It backs the share dialog's autocomplete (§5.9) and returns nothing but the colleagues the caller could already name. Never reachable anonymously and never crosses a workspace boundary.
+
 The email doesn't have to belong to an existing user — a grant pre-provisions the user row (users are created on first login anyway), so a doc can be shared with a colleague before their first visit. Emails whose domain doesn't resolve to the artifact's workspace are rejected with `422`; cross-workspace grants don't exist (§4.3).
 
 ### 5.4 Assets
@@ -519,6 +525,8 @@ A single button in the shell page header opens one panel:
 ```
 
 That is the whole interface. Three radio buttons mapping to `visibility`, an email field creating `artifact_grants` rows, a role dropdown per person, a copy-link button. No new concepts, no documentation needed, no folder tree.
+
+**People autocomplete.** Typing a full address is the wrong ask when the person is a colleague. The email field is a combobox backed by `GET /api/users/search?q=` (§5.3), which matches name or email prefix inside the caller's own workspace and returns at most ten. This is the same thing Outline does, and — importantly — it queries *our* `users` table, not the IdP's directory: no Directory API, no extra OAuth scope, no new setup step (§1.1). The honest limitation is that it only knows people artef has seen — someone who has logged in, or been pre-provisioned by an earlier grant. A brand-new deployment suggests nothing and fills in as the team arrives. Typing a full address that matches nobody still works exactly as before, because a grant pre-provisions the user.
 
 Two details that matter:
 
