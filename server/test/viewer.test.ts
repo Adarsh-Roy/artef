@@ -414,6 +414,18 @@ describe('the share dialog', () => {
     for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Escape']) {
       expect(body, key).toContain(key)
     }
+    // Closing the list cancels anything that would reopen it: a pending debounce
+    // timer, and any search still in flight. Without both, submitting or
+    // blurring within the debounce window pops the dropdown back over a field
+    // that is no longer focused (or no longer holds what the list is for).
+    const closeList = /function closeList\(\)\s*{[\s\S]*?\n  }/.exec(body)
+    expect(closeList, 'no closeList in the script').not.toBeNull()
+    expect(closeList![0]).toContain('clearTimeout(debounce)')
+    expect(closeList![0]).toContain('asked++')
+    // The scrollbar is part of the list container, not a row, so the container
+    // holds the focus on mousedown too — otherwise grabbing it to scroll blurs
+    // the field and the blur closes the list mid-scroll.
+    expect(body).toContain("suggestions.addEventListener('mousedown'")
   })
 
   it('escapes an XSS artifact name inside the dialog too', async () => {

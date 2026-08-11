@@ -354,6 +354,14 @@ function shareScript(o: ShellOpts): string {
   let asked = 0
 
   function closeList() {
+    // Closing also cancels anything that would reopen it: a keystroke still
+    // waiting out its debounce, and a search already in flight. Without this,
+    // hitting Enter within 150ms of typing fires the timer and pops the list
+    // back over the now-cleared field, and a blur with a fetch pending lets its
+    // answer reopen the list while the field is not even focused.
+    if (debounce) clearTimeout(debounce)
+    debounce = null
+    asked++
     matches = []
     active = -1
     suggestions.replaceChildren()
@@ -449,6 +457,13 @@ function shareScript(o: ShellOpts): string {
   })
 
   emailInput.addEventListener('blur', closeList)
+
+  // Grabbing the scrollbar — only reachable once the list is ten tall — is a
+  // mousedown on the container, not on a row, and would blur the field and
+  // close the list mid-scroll. Same guard the rows carry: hold the focus so the
+  // list stays put. A mousedown that lands on a row still reaches its own
+  // handler, which is what actually picks the person.
+  suggestions.addEventListener('mousedown', event => { event.preventDefault() })
 
   function add() {
     const email = emailInput.value.trim()
