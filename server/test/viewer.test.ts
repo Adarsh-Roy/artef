@@ -190,6 +190,11 @@ describe('GET /a/:id', () => {
     expect(seenByPeer).toContain('id="share-root"')
     expect(seenByPeer).not.toContain('id="share-dialog"')
     expect(seenByPeer).not.toContain('can update')
+    // The dialog knows the owner's address so it can leave them out of its
+    // suggestions (§5.9). A reader with no dialog has no business being told
+    // who owns the document.
+    expect(seenByPeer).not.toContain(user.email)
+    expect(await (await shell(art.id, { Cookie: admin.cookie })).text()).toContain(user.email)
   })
 
   it('carries a CSP of its own, on the shell and on the login page', async () => {
@@ -375,6 +380,40 @@ describe('the share dialog', () => {
     expect(body).toContain("credentials: 'same-origin'")
     expect(body).toContain('navigator.clipboard.writeText')
     expect(body).toContain(`https://artef.test/${art.id}`)
+  })
+
+  it('makes the email field a combobox with an empty listbox under it', async () => {
+    const { art, cookie } = await published()
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    // §5.9: typing a full address is the wrong ask when the person is a
+    // colleague, so the field suggests them.
+    expect(dialog).toContain('id="share-email"')
+    expect(dialog).toContain('role="combobox"')
+    expect(dialog).toContain('aria-expanded="false"')
+    expect(dialog).toContain('aria-controls="share-suggestions"')
+    expect(dialog).toMatch(/<ul id="share-suggestions"[^>]*role="listbox"[^>]*><\/ul>/)
+    // Nothing is server-rendered into it: every row is built from a live search.
+    expect(dialog).not.toContain('role="option"')
+  })
+
+  it('asks /api/users/search as people type, and writes the answers as text', async () => {
+    const { art, cookie } = await published()
+
+    const body = await (await shell(art.id, { Cookie: cookie })).text()
+    expect(body).toContain("'/api/users/search?q=' + encodeURIComponent(")
+    expect(body).toContain("credentials: 'same-origin'")
+    // A name and an address are written by whoever runs the IdP, which is to
+    // say they are user-controlled. They reach the DOM as text and never as
+    // markup — this whole page contains no innerHTML at all.
+    expect(body).not.toContain('innerHTML')
+    expect(body).toContain('.textContent = person.name')
+    expect(body).toContain('.textContent = person.email')
+    // The keys arrow, enter and escape all have to do something, or the field
+    // is a list nobody can reach without a mouse.
+    for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Escape']) {
+      expect(body, key).toContain(key)
+    }
   })
 
   it('escapes an XSS artifact name inside the dialog too', async () => {

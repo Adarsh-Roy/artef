@@ -18,6 +18,10 @@ export interface ShellOpts {
   version: number
   visibility: 'private' | 'restricted' | 'workspace' | 'public'
   canShare: boolean
+  /** The owner's address, so the share dialog can leave them out of its
+   *  suggestions — their access does not come from a grant row and cannot be
+   *  given by one (§5.9). `null` whenever there is no dialog to render. */
+  ownerEmail: string | null
   /** The content token for the frame, or `null` for a public document, which
    *  needs none (§2.4). */
   token: string | null
@@ -208,7 +212,10 @@ ${radio('public', 'Anyone with the link')}
 <p id="share-only-you"${o.visibility === 'private' ? '' : ' hidden'}>Only you</p>
 <div class="add">
 <label for="share-email">Add people</label>
-<input id="share-email" type="email" autocomplete="off" placeholder="email">
+<div class="combo">
+<input id="share-email" type="email" autocomplete="off" placeholder="email" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="share-suggestions">
+<ul id="share-suggestions" role="listbox" aria-label="Matching people" hidden></ul>
+</div>
 <select id="share-role" aria-label="Role for the person being added">${ROLE_OPTIONS}</select>
 <button id="share-add" type="button">Add</button>
 </div>
@@ -226,20 +233,24 @@ ${radio('public', 'Anyone with the link')}
 const ROLE_OPTIONS = '<option value="viewer">can view</option><option value="editor">can update</option>'
 
 /**
- * What makes the dialog work: four `fetch` calls against the artifact's own
- * API, same-origin, with the list re-read from the server after every one of
- * them. Nothing is patched into the DOM optimistically — if a grant failed, the
- * list must show what the server actually holds rather than what was clicked.
+ * What makes the dialog work: `fetch` calls against the artifact's own API,
+ * same-origin, with the list re-read from the server after every one of them.
+ * Nothing is patched into the DOM optimistically — if a grant failed, the list
+ * must show what the server actually holds rather than what was clicked. The
+ * one call that is not about this artifact is `/api/users/search`, which turns
+ * the email field into a combobox over the workspace's own people (§5.9).
  *
  * Every string that came from a person is written with `textContent`. The
  * markup above goes through `esc()`; in here there is no innerHTML at all, so
- * an email address is text and can never be markup.
+ * an email address — or a colleague's name, which comes from whoever runs the
+ * IdP — is text and can never be markup.
  */
 function shareScript(o: ShellOpts): string {
   return `
 (() => {
   const base = ${jsString(`/api/artifacts/${o.id}`)}
   const link = ${jsString(`${o.siteUrl.replace(/\/+$/, '')}/${o.id}`)}
+  const owner = ${jsString((o.ownerEmail ?? '').toLowerCase())}
   const dialog = document.getElementById('share-dialog')
   const openButton = document.getElementById('share-button')
   if (!dialog || !openButton) return
@@ -247,9 +258,13 @@ function shareScript(o: ShellOpts): string {
   const statusLine = document.getElementById('share-status')
   const onlyYou = document.getElementById('share-only-you')
   const emailInput = document.getElementById('share-email')
+  const suggestions = document.getElementById('share-suggestions')
   const roleSelect = document.getElementById('share-role')
   const radios = dialog.querySelectorAll('input[name="visibility"]')
   let visibility = ${jsString(o.visibility)}
+  /** Addresses the dialog will not suggest: everyone already on the list, and
+   *  the owner, who cannot be granted anything they do not already have. */
+  let taken = new Set(owner === '' ? [] : [owner])
 
   const say = message => { statusLine.textContent = message; statusLine.hidden = message === '' }
 
@@ -318,14 +333,127 @@ function shareScript(o: ShellOpts): string {
     try {
       const grants = await call('GET', '/grants')
       people.replaceChildren(...grants.map(personRow))
+      taken = new Set(owner === '' ? [] : [owner])
+      for (const grant of grants) taken.add(String(grant.email).toLowerCase())
     } catch (e) {
       say(e.message)
     }
   }
 
+  // --- suggesting colleagues (§5.9) ----------------------------------------
+  // Backed by the workspace's own users table, so it knows the people artef has
+  // seen and nobody else. Typing an address it never suggests still works
+  // exactly as before — a grant pre-provisions the user (§5.3) — which is why
+  // nothing in here may ever block or delay the plain Add.
+
+  let matches = []
+  let active = -1
+  let debounce = null
+  /** Only the newest request may write the list: the answer for 'sa' arriving
+   *  after the answer for 'sah' would replace the right list with a stale one. */
+  let asked = 0
+
+  function closeList() {
+    matches = []
+    active = -1
+    suggestions.replaceChildren()
+    suggestions.hidden = true
+    emailInput.setAttribute('aria-expanded', 'false')
+    emailInput.removeAttribute('aria-activedescendant')
+  }
+
+  function highlight(index) {
+    active = index
+    for (let i = 0; i < suggestions.children.length; i++) {
+      suggestions.children[i].setAttribute('aria-selected', i === active ? 'true' : 'false')
+    }
+    if (active < 0) {
+      emailInput.removeAttribute('aria-activedescendant')
+      return
+    }
+    emailInput.setAttribute('aria-activedescendant', 'share-suggestion-' + active)
+    const row = suggestions.children[active]
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' })
+  }
+
+  /** Picking fills the field and closes the list. It does not add anybody: the
+   *  role dropdown sits next to the field, and choosing a person is not the
+   *  same gesture as deciding what they may do. */
+  function pick(index) {
+    const person = matches[index]
+    if (!person) return
+    emailInput.value = person.email
+    closeList()
+    emailInput.focus()
+  }
+
+  /** Two lines, the way every share dialog does it: who they are, then the
+   *  address the grant will be written for. Both are createElement and
+   *  textContent — a name is user-controlled and is never markup. */
+  function suggestionRow(person, index) {
+    const row = document.createElement('li')
+    row.id = 'share-suggestion-' + index
+    row.setAttribute('role', 'option')
+    row.setAttribute('aria-selected', 'false')
+    const name = document.createElement('span')
+    name.className = 'name'
+    name.textContent = person.name || person.email
+    row.appendChild(name)
+    // Somebody pre-provisioned by an earlier grant has no name yet, and their
+    // address is already on the first line — a second copy of it is noise.
+    if (person.name) {
+      const email = document.createElement('span')
+      email.className = 'email'
+      email.textContent = person.email
+      row.appendChild(email)
+    }
+    // mousedown rather than click, and the default prevented: a click would
+    // blur the field first, and the blur closes the list out from under it.
+    row.addEventListener('mousedown', event => { event.preventDefault(); pick(index) })
+    return row
+  }
+
+  function show(found) {
+    matches = found
+    if (matches.length === 0) return closeList()
+    suggestions.replaceChildren(...matches.map(suggestionRow))
+    suggestions.hidden = false
+    emailInput.setAttribute('aria-expanded', 'true')
+    // Nothing highlighted to begin with, so Enter still submits what was typed.
+    highlight(-1)
+  }
+
+  async function lookUp(value) {
+    const mine = ++asked
+    let found = []
+    try {
+      const res = await fetch('/api/users/search?q=' + encodeURIComponent(value), {
+        credentials: 'same-origin',
+      })
+      if (res.ok) found = await res.json()
+    } catch (e) {
+      // A failed search is not worth a message. The field works without it.
+    }
+    if (mine !== asked) return
+    if (!Array.isArray(found)) found = []
+    show(found.filter(p => p && p.email && !taken.has(String(p.email).toLowerCase())))
+  }
+
+  emailInput.addEventListener('input', () => {
+    const value = emailInput.value.trim()
+    if (debounce) clearTimeout(debounce)
+    if (value === '') return closeList()
+    // A keystroke is not a query: a short wait turns a typed address into one
+    // request instead of twenty.
+    debounce = setTimeout(() => lookUp(value), 150)
+  })
+
+  emailInput.addEventListener('blur', closeList)
+
   function add() {
     const email = emailInput.value.trim()
     if (email === '') return
+    closeList()
     run(async () => {
       await call('POST', '/grants', { email: email, role: roleSelect.value })
       emailInput.value = ''
@@ -339,10 +467,34 @@ function shareScript(o: ShellOpts): string {
     })
   }
 
-  openButton.addEventListener('click', () => { if (!dialog.open) dialog.showModal(); run() })
+  openButton.addEventListener('click', () => { if (!dialog.open) dialog.showModal(); closeList(); run() })
   document.getElementById('share-done').addEventListener('click', () => dialog.close())
   document.getElementById('share-add').addEventListener('click', add)
-  emailInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add() } })
+
+  emailInput.addEventListener('keydown', e => {
+    const open = matches.length > 0
+    if (e.key === 'ArrowDown' && open) {
+      e.preventDefault()
+      highlight(active + 1 >= matches.length ? 0 : active + 1)
+    } else if (e.key === 'ArrowUp' && open) {
+      e.preventDefault()
+      highlight(active - 1 < 0 ? matches.length - 1 : active - 1)
+    } else if (e.key === 'Escape' && open) {
+      // The list closes and the dialog stays open, which is what Escape means
+      // while a dropdown is showing. Without preventDefault the dialog itself
+      // would close, losing the list and the dialog in one keystroke.
+      e.preventDefault()
+      e.stopPropagation()
+      closeList()
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      // Highlighted: that is who they meant. Nothing highlighted: the typed
+      // address is the answer, and it stays the answer when it matches nobody
+      // — a grant pre-provisions the user (§5.3).
+      if (active >= 0) pick(active)
+      else add()
+    }
+  })
 
   for (const radio of radios) {
     radio.addEventListener('change', () => {
@@ -403,7 +555,14 @@ body{margin:0;font:14px/1.5 system-ui,sans-serif;display:flex;flex-direction:col
 #share-only-you{margin:0 0 .5rem;color:#666}
 #share-dialog .add{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:.75rem 0;padding-top:.75rem;border-top:1px solid #eee}
 #share-dialog .add label{flex-basis:100%}
-#share-email{flex:1;min-width:10rem;font:inherit;padding:.35rem .5rem;border:1px solid #ccc;border-radius:.375rem}
+#share-dialog .combo{position:relative;flex:1;min-width:10rem}
+#share-email{width:100%;font:inherit;padding:.35rem .5rem;border:1px solid #ccc;border-radius:.375rem}
+#share-suggestions{position:absolute;z-index:1;left:0;right:0;top:calc(100% + .15rem);margin:0;padding:.15rem;list-style:none;background:#fff;border:1px solid #ccc;border-radius:.375rem;box-shadow:0 6px 18px rgba(0,0,0,.14);max-height:13rem;overflow-y:auto}
+#share-suggestions[hidden]{display:none}
+#share-suggestions li{padding:.3rem .45rem;border-radius:.25rem;cursor:pointer;overflow-wrap:anywhere}
+#share-suggestions li[aria-selected="true"]{background:#eef2ff}
+#share-suggestions .name{display:block}
+#share-suggestions .email{display:block;color:#666;font-size:.8125rem}
 #share-people{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}
 #share-people li{display:flex;align-items:center;gap:.5rem}
 #share-people .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

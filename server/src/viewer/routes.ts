@@ -13,7 +13,7 @@
 import { eq } from 'drizzle-orm'
 import type { Context, Hono } from 'hono'
 import type { AppEnv, Deps } from '../app.js'
-import { workspaces } from '../db/schema.js'
+import { users, workspaces } from '../db/schema.js'
 import { can } from '../lib/acl.js'
 import { sendStoredBody } from '../lib/blob.js'
 import { mintContentToken, verifyContentToken } from '../lib/crypto.js'
@@ -79,13 +79,17 @@ export function registerViewerRoutes(app: Hono<AppEnv>, deps: Deps): void {
     if (found !== null && can(user, found.art, 'viewer', found.grantRole)) {
       const art = found.art
       const isPublic = art.visibility === 'public'
+      // Sharing is an ownership decision, never an editing one (§5.9).
+      const canShare = user !== null && isOwnerOrAdmin(user, art)
       const html = renderShell({
         id: art.id,
         name: art.name,
         version: art.version,
         visibility: art.visibility,
-        // Sharing is an ownership decision, never an editing one (§5.9).
-        canShare: user !== null && isOwnerOrAdmin(user, art),
+        canShare,
+        // Only for a page that will render the dialog, and free in the common
+        // case — the person sharing a document is usually the one who owns it.
+        ownerEmail: canShare ? await ownerEmail(deps, art, user) : null,
         token: isPublic ? null : mintContentToken(art.id, deps.cfg.secretKey),
         siteUrl: deps.cfg.url,
         workspaceDomain: await workspaceDomain(deps, user, art.workspaceId),
@@ -147,6 +151,27 @@ const shellPath = (id: string) => `/a/${encodeURIComponent(id)}`
 
 const page = (c: Context<AppEnv>, html: string, status: 200 | 404) =>
   c.body(html, status, { ...shellPageHeaders(), 'Content-Type': 'text/html; charset=utf-8' })
+
+/**
+ * The owner's address, which the share dialog leaves out of its suggestions:
+ * their access does not come from a grant row and cannot be given by one, so
+ * offering them is offering a click the API answers with a 422 (§5.9). Read
+ * only for a reader who may share, and only when that reader is not the owner
+ * themselves — which is the usual case, and costs no query at all.
+ */
+async function ownerEmail(
+  deps: Deps,
+  art: { ownerId: string },
+  viewer: { id: string; email: string } | null,
+): Promise<string | null> {
+  if (viewer !== null && viewer.id === art.ownerId) return viewer.email
+  const [row] = await deps.db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, art.ownerId))
+    .limit(1)
+  return row?.email ?? null
+}
 
 /**
  * The domain shown in the header bar, and only to someone inside that

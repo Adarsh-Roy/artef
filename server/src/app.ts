@@ -21,6 +21,7 @@ import { registerEventRoutes } from './routes/events.js'
 import { registerGrantRoutes } from './routes/grants.js'
 import { registerMcpRoutes } from './routes/mcp.js'
 import { registerTokenRoutes } from './routes/tokens.js'
+import { registerUserRoutes } from './routes/users.js'
 import { registerViewerRoutes } from './viewer/routes.js'
 
 export interface Deps {
@@ -100,6 +101,9 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   registerContentRoutes(app, deps)
   registerEventRoutes(app, deps)
   registerGrantRoutes(app, deps)
+  // Next to the grants, because it backs the same dialog: the field that writes
+  // a grant row is the field this suggests colleagues into (§5.9).
+  registerUserRoutes(app, deps)
   registerAssetRoutes(app, deps)
   // The MCP tools are adapters: each one dispatches back into this same app
   // over `app.request` (§7.0). That works from anywhere in this list — a tool

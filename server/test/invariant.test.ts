@@ -276,6 +276,10 @@ describe('the whole route table', () => {
     'GET /api/artifacts/:id/grants',
     'GET /api/tokens',
     'GET /assets/:sha',
+    // The share dialog's people autocomplete (§5.3). JSON only — a list of
+    // email addresses and names, session-authed and workspace-scoped — so it
+    // serves no user bytes and is not in the byte-route list above.
+    'GET /api/users/search',
     'GET /auth/google',
     'GET /auth/google/callback',
     'GET /auth/login',
