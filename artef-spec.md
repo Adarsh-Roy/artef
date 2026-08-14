@@ -851,7 +851,9 @@ Nothing blocking. Two things to decide during implementation rather than now:
 
 3. **Sandbox `allow-downloads`.** A report that offers a "download this CSV" link needs the `allow-downloads` sandbox token, or the click silently does nothing. Off for now; add when a real artifact wants it.
 
-4. **Pre-provisioning vs `hd`-derived workspaces.** A grant pre-provisions a user row with the workspace derived from the typed address (§5.3), while login derives it from the IdP where possible (§4.3 rule 3) — and login keeps an existing row's workspace. For a Google org whose secondary-domain address legitimately resolves to a different `hd`, the pre-provisioned workspace wins. Narrow, and bounded by the domain-equality check; revisit if a real multi-domain org hits it.
+4. **Vendored-script deduplication.** Vendoring a charting library inline (the only way to use one under §2.1) stores a copy per document — ~0.9MB gzipped per Mermaid doc, observed in field testing. Images already dedupe through content-addressed assets; scripts deliberately don't, because `script-src` has no `'self'` and that absence is the "only what's in the document executes" story. The clean extension, if duplication ever hurts at real scale: extraction pulls large inline `<script>` blocks into `/assets/<sha>.js` and the CSP gains `script-src 'self'` — same-origin, content-addressed, still no external fetch, one copy per workspace. Decide deliberately; it trades a sentence of security story for storage.
+
+5. **Pre-provisioning vs `hd`-derived workspaces.** A grant pre-provisions a user row with the workspace derived from the typed address (§5.3), while login derives it from the IdP where possible (§4.3 rule 3) — and login keeps an existing row's workspace. For a Google org whose secondary-domain address legitimately resolves to a different `hd`, the pre-provisioned workspace wins. Narrow, and bounded by the domain-equality check; revisit if a real multi-domain org hits it.
 
 ---
 
