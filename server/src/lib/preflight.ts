@@ -45,12 +45,21 @@ const INLINE_IT = 'inline it or vendor it manually'
 
 /** `script-src` carries no `'self'` and no `data:`, so a `src` of any kind —
  *  external, root-relative, relative, even `data:` — is blocked. Only inline
- *  `<script>` runs. */
-const SCRIPT_BLOCKED = 'external and local scripts are both blocked; inline the code in a <script> tag'
+ *  `<script>` runs.
+ *
+ *  The message names the library case on purpose: an agent reaching for a CDN
+ *  build of mermaid or chart.js has to be told that fetching the source and
+ *  pasting it in is the fix and that a few megabytes of it is fine, or it reads
+ *  "inline the code" as "the library cannot be used". Kept identical to
+ *  `SCRIPT_BLOCKED` in `cli/src/lint.rs`. */
+const SCRIPT_BLOCKED =
+  'external and local scripts are both blocked; only inline <script> runs. For a library, fetch its source and paste it into an inline <script> tag (the upload cap is 10MB) — or generate self-contained code instead'
 
 /** `style-src` is `'unsafe-inline'` only, so a stylesheet `<link>` of any href
- *  is dead. */
-const STYLESHEET_BLOCKED = 'inline the CSS in a <style> tag'
+ *  is dead. Same library point as above, for CSS frameworks. Kept identical to
+ *  `STYLESHEET_BLOCKED` in `cli/src/lint.rs`. */
+const STYLESHEET_BLOCKED =
+  'external and local stylesheets are both blocked; only inline <style> applies, so inline the CSS in a <style> tag. For a CSS framework, paste its contents into <style> (the upload cap is 10MB) — or write the styles yourself'
 
 /** `base-uri 'none'` makes `<base href>` inert — the browser ignores it. */
 const BASE_IGNORED = "base-uri 'none' ignores <base>; use absolute or /assets paths"

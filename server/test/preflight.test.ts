@@ -171,14 +171,19 @@ describe('what the preflight hands back', () => {
 
   it('tells a local script and stylesheet to be inlined, not fetched', () => {
     // A local `src` is dead under `script-src`, so the message must not suggest
-    // the file will load — it must say to inline the code.
+    // the file will load — it must say that only inline code runs, and it must
+    // say how to keep using a library (fetch the source, paste it in), which is
+    // the case that sends agents back to a CDN.
     const script = only('<script src="/app.js"></script>')
     expect(script.what).toContain('/app.js')
-    expect(script.detail).toContain('inline the code')
+    expect(script.detail).toContain('only inline <script> runs')
+    expect(script.detail).toContain('fetch its source')
+    expect(script.detail).toContain('10MB')
 
     const sheet = only('<link rel="stylesheet" href="/x.css">')
     expect(sheet.what).toContain('/x.css')
     expect(sheet.detail).toContain('inline the CSS')
+    expect(sheet.detail).toContain('CSS framework')
 
     // `<base href>` is inert rather than broken, so it warns and names base-uri.
     const base = only('<base href="/">')

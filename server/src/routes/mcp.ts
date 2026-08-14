@@ -167,7 +167,8 @@ function buildServer(app: Hono<AppEnv>, deps: Deps, authorization: string): McpS
       title: 'Publish an artifact',
       description:
         'Create a new artifact from a self-contained HTML document and return its shareable URL. ' +
-        'The document is checked against the artifact content security policy first: if it references ' +
+        'The document must be fully self-contained — no external scripts/styles/images; inline everything (libraries included). ' +
+        'It is checked against the artifact content security policy first: if it references ' +
         'anything external it is refused, unwritten, with the violations listed. ' +
         `Documents are limited to ${deps.cfg.maxArtifactBytes} bytes uncompressed.`,
       inputSchema: {
@@ -211,6 +212,7 @@ function buildServer(app: Hono<AppEnv>, deps: Deps, authorization: string): McpS
       title: 'Update an artifact',
       description:
         'Replace the contents of an existing artifact. The same content security policy check runs first. ' +
+        'The document must be fully self-contained — no external scripts/styles/images; inline everything (libraries included). ' +
         'Pass base_version to make the write conditional: if someone else has published since, the write is ' +
         'refused with the version that is current instead of overwriting their work.',
       inputSchema: {
@@ -391,6 +393,8 @@ function refusedByPreflight(checked: { rejects: Violation[]; warns: Violation[] 
     error: 'the document would render broken under the artifact content security policy, so nothing was written',
     rejects: checked.rejects,
     warns: checked.warns,
-    hint: 'everything the document needs must be inline: CSS in <style>, JavaScript in <script>, images as data: URIs',
+    hint:
+      'everything the document needs must be inline: CSS in <style>, JavaScript in <script>, images as data: URIs. ' +
+      'If the document needs a library (chart/diagram/etc.), fetch the library’s source and include it inline — do not reference CDNs',
   })
 }
