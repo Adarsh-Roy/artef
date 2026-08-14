@@ -524,7 +524,14 @@ A single button in the shell page header opens one panel:
                           [ Copy link ]  [ Done ]
 ```
 
-That is the whole interface. Three radio buttons mapping to `visibility`, an email field creating `artifact_grants` rows, a role dropdown per person, a copy-link button. No new concepts, no documentation needed, no folder tree.
+That is the whole interface. Three visibility states, an email field creating `artifact_grants` rows, a role dropdown per person, a copy-link button. No new concepts, no documentation needed, no folder tree.
+
+**Anatomy (follow Google Docs' dialog, not a loose homage — v0.2 field feedback):**
+
+- **Add people** at the top: the autocomplete field + role select + Add.
+- **"People with access"**: a scrollable list (it must stay usable at fifty grantees). First row is the owner — avatar-less "Name (you) · owner", no controls. Every other row: name on the first line, email on the second, and a role dropdown on the right whose options are `can view`, `can update`, and `Remove access` — removal lives in the dropdown exactly as Docs does it, not as a separate ×.
+- **"General access"** at the bottom, visually separated: a dropdown with the three states — `Only people with access` (restricted), `Anyone at {domain}` (workspace), `Anyone with the link` (public) — beside a fixed **`can view`** label, because workspace-wide and link access are always view-only in this model (update rights are only ever per-person; §4.2). One helper line under it states the consequence plainly, e.g. "Everyone at company.com can view. People listed above keep their roles." Ambiguity about what a general-access change grants was the exact confusion reported in field testing; the fixed label and helper line are the answer.
+- `private` remains the no-general-access state ("Only people with access") rather than a fourth radio, per the original rule below.
 
 **People autocomplete.** Typing a full address is the wrong ask when the person is a colleague. The email field is a combobox backed by `GET /api/users/search?q=` (§5.3), which matches name or email prefix inside the caller's own workspace and returns at most ten. This is the same thing Outline does, and — importantly — it queries *our* `users` table, not the IdP's directory: no Directory API, no extra OAuth scope, no new setup step (§1.1). The honest limitation is that it only knows people artef has seen — someone who has logged in, or been pre-provisioned by an earlier grant. A brand-new deployment suggests nothing and fills in as the team arrives. Typing a full address that matches nobody still works exactly as before, because a grant pre-provisions the user.
 
