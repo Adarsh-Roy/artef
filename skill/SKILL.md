@@ -14,7 +14,7 @@ Write the document so it needs nothing but itself.
 
 ## Never — `artef push` refuses to upload these
 
-- `<script src="…">` — no `src` at all, external or local. Only inline `<script>` runs, so put the code inside the tag. (This includes CDN libraries; inline what you need or write the few lines yourself.)
+- `<script src="…">` — no `src` at all, external or local. Only inline `<script>` runs, so put the code inside the tag. For a library (mermaid, chart.js), fetch the library source and paste it into an inline `<script>`; a few MB of it is fine under the 10MB upload cap. Otherwise write the few lines yourself.
 - `<link rel="stylesheet" href="…">` — blocked whatever it points at, external or local; only inline `<style>` applies. Inline the CSS in a `<style>` tag. Google Fonts links go too — use a system font stack (`system-ui, sans-serif`) or embed a font as a `data:` URI.
 - `@import url(https://…)` and `@import "https://…"` in CSS.
 - `<img src="https://…">`, `srcset`, `<source>`, `poster` — base64 the bytes into a `data:` URI yourself. No flag fetches remote images for you.

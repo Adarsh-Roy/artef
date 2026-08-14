@@ -37,11 +37,17 @@ const INLINE_IT: &str = "inline it or vendor it manually";
 
 /// `script-src` carries no `'self'` and no `data:`, so a `src` of any kind — external,
 /// root-relative, relative, even `data:` — is blocked. Only inline `<script>` runs.
-const SCRIPT_BLOCKED: &str =
-    "external and local scripts are both blocked; inline the code in a <script> tag";
+///
+/// The message names the library case on purpose: someone reaching for a CDN build of
+/// mermaid or chart.js has to be told that fetching the source and pasting it in is the
+/// fix and that a few megabytes of it is fine, or "inline the code" reads as "the library
+/// cannot be used". Kept identical to `SCRIPT_BLOCKED` in `server/src/lib/preflight.ts`.
+const SCRIPT_BLOCKED: &str = "external and local scripts are both blocked; only inline <script> runs. For a library, fetch its source and paste it into an inline <script> tag (the upload cap is 10MB) — or generate self-contained code instead";
 
 /// `style-src` is `'unsafe-inline'` only, so a stylesheet `<link>` of any href is dead.
-const STYLESHEET_BLOCKED: &str = "inline the CSS in a <style> tag";
+/// Same library point as above, for CSS frameworks. Kept identical to
+/// `STYLESHEET_BLOCKED` in `server/src/lib/preflight.ts`.
+const STYLESHEET_BLOCKED: &str = "external and local stylesheets are both blocked; only inline <style> applies, so inline the CSS in a <style> tag. For a CSS framework, paste its contents into <style> (the upload cap is 10MB) — or write the styles yourself";
 
 /// `base-uri 'none'` makes `<base href>` inert — the browser silently ignores it.
 const BASE_IGNORED: &str = "base-uri 'none' ignores <base>; use absolute or /assets paths";
@@ -719,12 +725,19 @@ mod tests {
     #[test]
     fn blocked_subresources_name_the_source_and_the_fix() {
         // A local script src is dead under script-src, so the message must not
-        // suggest the file will load — it must say to inline the code.
+        // suggest the file will load — it must say that only inline code runs, and
+        // it must say how to keep using a library (fetch the source, paste it in),
+        // which is the case that sends agents back to a CDN.
         let v = &lint_html(r#"<script src="/app.js"></script>"#)[0];
         assert_eq!(v.severity, Reject);
         assert!(v.what.contains("/app.js"), "what was {:?}", v.what);
         assert!(
-            v.detail.contains("inline the code"),
+            v.detail.contains("only inline <script> runs"),
+            "detail was {:?}",
+            v.detail
+        );
+        assert!(
+            v.detail.contains("fetch its source") && v.detail.contains("10MB"),
             "detail was {:?}",
             v.detail
         );
@@ -735,6 +748,11 @@ mod tests {
         assert!(v.what.contains("/x.css"), "what was {:?}", v.what);
         assert!(
             v.detail.contains("inline the CSS"),
+            "detail was {:?}",
+            v.detail
+        );
+        assert!(
+            v.detail.contains("CSS framework"),
             "detail was {:?}",
             v.detail
         );
