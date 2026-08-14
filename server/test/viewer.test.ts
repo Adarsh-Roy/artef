@@ -223,6 +223,31 @@ describe('GET /a/:id', () => {
     expect(SHELL_CSP).toContain("frame-ancestors 'self'")
   })
 
+  // This page hosts session mutations — the share dialog's POST/PATCH/DELETE
+  // fetches and the logout form — so its referrer policy must not be
+  // `no-referrer`. Per the Fetch spec a `no-referrer` document sends
+  // `Origin: null` even on its own same-origin requests, and the origin check
+  // refuses `null` (correctly, and by design). `same-origin` costs nothing in
+  // privacy: a referrer goes to this origin and to no other, so an `/a/:id` URL
+  // still never reaches another site.
+  it('sends a referrer to itself and nowhere else, so its own POSTs carry an Origin', async () => {
+    const { art, cookie } = await published({ visibility: 'workspace' })
+
+    const owner = await shell(art.id, { Cookie: cookie })
+    expect(owner.status).toBe(200)
+    expect(owner.headers.get('Referrer-Policy')).toBe('same-origin')
+
+    // The link-preview page (§5.8) is served from the same header set, and the
+    // refusal is a page from this origin like any other.
+    const preview = await shell(art.id)
+    expect(preview.status).toBe(200)
+    expect(preview.headers.get('Referrer-Policy')).toBe('same-origin')
+
+    const missing = await shell(UNKNOWN_ID, { Cookie: cookie })
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get('Referrer-Policy')).toBe('same-origin')
+  })
+
   it('offers logout to a signed-in reader and sign-in to an anonymous one', async () => {
     const { art, cookie } = await published({ visibility: 'public' })
 

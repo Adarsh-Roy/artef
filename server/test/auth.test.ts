@@ -327,6 +327,19 @@ describe('origin check', () => {
     expect(res.status).toBe(403)
   })
 
+  // `null` is the literal string a browser sends, not a missing header: a
+  // document served with `Referrer-Policy: no-referrer` sends `Origin: null`
+  // even on a POST to its own origin. Refusing it is deliberate — an opaque
+  // origin is also what a sandboxed frame and a data: URL send, and none of
+  // them may be taken for this app. A page of ours that ever trips this has the
+  // wrong referrer policy, and that is what gets fixed (see lib/headers.ts).
+  it('refuses a session-authed mutation whose Origin is the string "null"', async () => {
+    const { cookie } = await makeUser(deps)
+    const res = await post(deps.app, { Cookie: cookie, Origin: 'null' })
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'bad origin' })
+  })
+
   it('allows a session-authed mutation from the app origin', async () => {
     const { cookie } = await makeUser(deps)
     const res = await post(deps.app, { Cookie: cookie, Origin: 'https://artef.test' })

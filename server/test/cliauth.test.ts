@@ -316,19 +316,24 @@ describe('cli auth page headers', () => {
       // The approve page carries the token itself; the others carry a form that
       // mints one. None of it belongs in a cache on a shared machine.
       expect(res.headers.get('Cache-Control')).toBe('private, no-store')
-      expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
+      // Not `no-referrer`: the Authorize button is a POST from this very page,
+      // and a `no-referrer` document sends `Origin: null` on its own requests,
+      // which the origin check refuses. `same-origin` sends a referrer to this
+      // origin and to nowhere else (see lib/headers.ts).
+      expect(res.headers.get('Referrer-Policy')).toBe('same-origin')
       expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
     }
   })
 
-  // The loopback callback URL carries the one-time code. Without this the
-  // listener — and anything the CLI's callback page loads — would be told which
-  // artef server the person just signed in to.
+  // The loopback callback URL carries the one-time code, and the listener has
+  // no business being told which artef server the person just signed in to.
+  // `same-origin` covers this: `localhost:3000` → `127.0.0.1:<port>` is a
+  // cross-origin destination, so the browser strips the referrer entirely.
   it('sends no referrer with the redirect to the loopback', async () => {
     const { cookie } = await makeUser(deps)
     const res = await approve({ port: PORT, state: STATE }, { Cookie: cookie, Origin: ORIGIN })
     expect(res.status).toBe(302)
-    expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
+    expect(res.headers.get('Referrer-Policy')).toBe('same-origin')
     expect(res.headers.get('Cache-Control')).toBe('private, no-store')
   })
 

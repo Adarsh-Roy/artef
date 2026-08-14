@@ -118,6 +118,12 @@ describe('routes that serve user-supplied bytes', () => {
 
     expect(res.headers.get('Content-Security-Policy')).toBe(ARTIFACT_CSP)
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    // `no-referrer` here is load-bearing and stays that way: the content token
+    // rides in this URL's query string (§2.4), so a referrer of any kind — even
+    // a same-origin one — would hand the credential to whatever the document
+    // loads. The app's own pages use `same-origin` instead, because they host
+    // session mutations and `no-referrer` nulls the Origin header on those; do
+    // not "harmonize" this one with them.
     expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
     expect(res.headers.get('Cache-Control')).toBe('private, no-store')
     expect(res.headers.get('Content-Type')).toBe('text/html; charset=utf-8')

@@ -20,6 +20,14 @@ export function originCheck(cfg: Config): MiddlewareHandler<AppEnv> {
     if (c.get('authKind') !== 'session') return next()
     // A missing header is `undefined`, which is not `expected` either — an
     // absent Origin on a mutation is exactly the case worth refusing.
+    //
+    // The literal string `null` is refused the same way, and that one has a
+    // trap in it: `Origin: null` is what a `no-referrer` page's own same-origin
+    // POSTs and fetches look like, per the Fetch spec's Origin serialization.
+    // If a legitimate page of ours ever trips this check, the fix is that
+    // page's `Referrer-Policy` (see lib/headers.ts) — never accepting `null`
+    // here. An opaque origin is also what a sandboxed frame and a `data:` URL
+    // send, and none of them are this app.
     if (c.req.header('Origin') !== expected) {
       return c.json({ error: 'bad origin' }, 403)
     }

@@ -60,15 +60,28 @@ export const CLI_AUTH_CSP =
  * `/cli/auth`, `/cli/auth/manual` and the response to approving. The manual
  * page carries a plaintext machine token in its body, so `no-store` is not
  * hygiene here — it is what keeps the credential off the disk of a shared
- * machine. `no-referrer` covers the redirect to the loopback as well: the
- * callback URL holds the one-time code, and the listener has no business being
- * told which server the person just signed in to.
+ * machine.
+ *
+ * `same-origin` rather than `no-referrer`, and the difference matters: the
+ * Authorize button is a POST from this page to `/cli/auth/approve`, and per the
+ * Fetch spec a document served with `no-referrer` sends `Origin: null` on its
+ * own same-origin requests. The origin check refuses `null` — correctly, since
+ * an opaque origin is not this app — so a `no-referrer` page cannot perform a
+ * single session mutation in a real browser. A page that hosts one must never
+ * use `no-referrer` (see auth/origin.ts).
+ *
+ * It gives nothing away. `same-origin` sends a referrer to this origin and to
+ * no other, so no `/cli/auth` URL reaches another site — and the redirect to
+ * the loopback (`localhost:3000` → `127.0.0.1:<port>`) is a cross-origin
+ * destination, which means the browser strips the referrer there exactly as
+ * `no-referrer` did. The callback URL holds the one-time code, and the listener
+ * is still told nothing about which server the person signed in to.
  */
 export function cliAuthPageHeaders(): Record<string, string> {
   return {
     'Content-Security-Policy': CLI_AUTH_CSP,
     'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+    'Referrer-Policy': 'same-origin',
     'Cache-Control': 'private, no-store',
   }
 }
@@ -79,20 +92,38 @@ export function artifactPageHeaders(): Record<string, string> {
     'Content-Security-Policy': ARTIFACT_CSP,
     'X-Content-Type-Options': 'nosniff',
     // The content token lives in this URL's query string (§2.4), so it must not
-    // ride along in a referrer.
+    // ride along in a referrer — not even a same-origin one, which is why this
+    // stays `no-referrer` while the app's own pages use `same-origin`. Nothing
+    // is lost by it: this document is sandboxed into an opaque origin and its
+    // CSP leaves it no request to make, so it has no mutation to null the
+    // Origin header on.
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'private, no-store',
   }
 }
 
-/** `/a/:id` — the app's own page, which embeds a content token in the markup
- *  it returns (§2.4). A short-lived credential must not sit in a cache waiting
- *  for the next person on a shared machine. */
+/**
+ * `/a/:id` — the app's own page, which embeds a content token in the markup it
+ * returns (§2.4). A short-lived credential must not sit in a cache waiting for
+ * the next person on a shared machine.
+ *
+ * `same-origin` rather than `no-referrer`, for the same reason as the cli-auth
+ * pages above: this page hosts session mutations — the share dialog's POST,
+ * PATCH and DELETE fetches and the logout form — and a `no-referrer` document
+ * sends `Origin: null` on its own same-origin requests, which the origin check
+ * refuses (see auth/origin.ts). Under `no-referrer` every one of those comes
+ * back 403 in a real browser.
+ *
+ * The privacy the original policy bought is intact: `same-origin` sends a
+ * referrer to this origin and to no other, so an `/a/:id` URL never leaves for
+ * a third-party site. Note that the token is in the markup, not in this URL —
+ * the URL that does carry one is `/c/:id`, which keeps `no-referrer` above.
+ */
 export function shellPageHeaders(): Record<string, string> {
   return {
     'Content-Security-Policy': SHELL_CSP,
     'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+    'Referrer-Policy': 'same-origin',
     'Cache-Control': 'private, no-store',
   }
 }
