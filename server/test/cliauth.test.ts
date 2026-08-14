@@ -313,6 +313,10 @@ describe('cli auth page headers', () => {
       // put this page in a frame and aim a click at that button.
       expect(csp).toContain("frame-ancestors 'none'")
       expect(csp).toContain("default-src 'none'")
+      // Chromium checks form-action against the whole redirect chain of a
+      // submission, so the loopback the approve POST redirects to has to be
+      // named here or the browser refuses to follow it (see lib/headers.ts).
+      expect(csp).toContain("form-action 'self' http://127.0.0.1:*")
       // The approve page carries the token itself; the others carry a form that
       // mints one. None of it belongs in a cache on a shared machine.
       expect(res.headers.get('Cache-Control')).toBe('private, no-store')
@@ -335,6 +339,30 @@ describe('cli auth page headers', () => {
     expect(res.status).toBe(302)
     expect(res.headers.get('Referrer-Policy')).toBe('same-origin')
     expect(res.headers.get('Cache-Control')).toBe('private, no-store')
+  })
+
+  // The bug this pins: Chromium enforces `form-action` against the redirect a
+  // form submission lands on, not just the URL the form posts to. The approve
+  // POST answers 302 to the loopback, so a policy that does not name that host
+  // makes Chrome drop the navigation — the code is minted server-side and the
+  // CLI never hears about it. The redirect builder hardcodes 127.0.0.1, so the
+  // two can only agree; this test is what says so out loud.
+  it('allows the host it actually redirects to in form-action', async () => {
+    const { cookie } = await makeUser(deps)
+    const res = await approve({ port: PORT, state: STATE }, { Cookie: cookie, Origin: ORIGIN })
+    expect(res.status).toBe(302)
+
+    const target = new URL(res.headers.get('location')!)
+    expect(target.hostname).toBe('127.0.0.1')
+
+    const csp = res.headers.get('Content-Security-Policy')!
+    const directive = csp
+      .split(';')
+      .map(part => part.trim())
+      .find(part => part.startsWith('form-action '))
+    expect(directive).toBe("form-action 'self' http://127.0.0.1:*")
+    // The wildcard is on the port only: every other origin is still refused.
+    expect(directive).toContain(`http://${target.hostname}:`)
   })
 
   it('400s a form body that is not a form', async () => {

@@ -48,13 +48,24 @@ export const SHELL_CSP =
  * heading, a form and a link — so everything is denied and only the inline
  * `<style>` and the form's own target are allowed back.
  *
- * `frame-ancestors 'none'` is stricter than the shell page's `'self'`, and for
- * the same reason it exists there: a click on this page's button hands out a
- * machine token that lives until someone revokes it. Nothing in this app frames
- * these pages, so nothing may.
+ * `form-action` names the loopback as well as `'self'`, and that is not a
+ * loosening — it is the flow. Chromium checks `form-action` against the
+ * *redirect target* of a form submission, not only against the URL in the
+ * `action` attribute, and the loopback callback IS our redirect target: the
+ * Authorize button posts to `/cli/auth/approve` on this origin, which answers
+ * 302 to `http://127.0.0.1:<port>/callback`. Without the allowance Chrome mints
+ * the code, refuses to follow the redirect, and the CLI waits forever. Firefox
+ * and Safari never enforced it on redirects, so this is Chromium-only — and
+ * Chromium is most browsers.
+ *
+ * The host is a literal because the redirect builds a literal: routes/cliauth.ts
+ * hardcodes `127.0.0.1` and lets the caller choose only the port, so the port is
+ * the one thing this wildcard has to cover and the policy cannot drift away from
+ * the redirect without someone editing both. Nothing else opens — the manual
+ * variant still posts to `'self'`, and no other origin is named.
  */
 export const CLI_AUTH_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' http://127.0.0.1:*; base-uri 'none'; frame-ancestors 'none'"
 
 /**
  * `/cli/auth`, `/cli/auth/manual` and the response to approving. The manual

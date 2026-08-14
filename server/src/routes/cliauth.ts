@@ -147,6 +147,12 @@ export function registerCliAuthRoutes(app: Hono<AppEnv>, deps: Deps): void {
     // 127.0.0.1 is hardcoded and the port is the only thing the caller chooses.
     // 'localhost' would be a name someone else's DNS could answer, and any host
     // from the query string would make this an open redirect.
+    //
+    // This literal is also what CLI_AUTH_CSP's `form-action` names (lib/
+    // headers.ts): Chromium refuses to follow a form submission's redirect to an
+    // origin the policy does not allow, so the host written here and the host
+    // written there have to be the same one. Changing this line means changing
+    // that one.
     const target = new URL(`http://127.0.0.1:${port}/callback`)
     target.searchParams.set('code', code)
     target.searchParams.set('state', state)
