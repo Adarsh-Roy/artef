@@ -99,7 +99,7 @@ let userSeq = 0
 
 export async function makeUser(
   deps: Deps,
-  opts: { email?: string; isAdmin?: boolean; domain?: string } = {},
+  opts: { email?: string; isAdmin?: boolean; domain?: string; name?: string } = {},
 ): Promise<{
   user: typeof users.$inferSelect
   workspace: typeof workspaces.$inferSelect
@@ -122,7 +122,7 @@ export async function makeUser(
     .values({
       workspaceId: workspace.id,
       email,
-      name: email.split('@')[0],
+      name: opts.name ?? email.split('@')[0],
       isAdmin: opts.isAdmin ?? false,
     })
     .returning()

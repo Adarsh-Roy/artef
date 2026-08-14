@@ -81,15 +81,18 @@ export function registerViewerRoutes(app: Hono<AppEnv>, deps: Deps): void {
       const isPublic = art.visibility === 'public'
       // Sharing is an ownership decision, never an editing one (§5.9).
       const canShare = user !== null && isOwnerOrAdmin(user, art)
+      // Only for a page that will render the dialog, and free in the common
+      // case — the person sharing a document is usually the one who owns it.
+      const owner = canShare ? await ownerOf(deps, art, user) : null
       const html = renderShell({
         id: art.id,
         name: art.name,
         version: art.version,
         visibility: art.visibility,
         canShare,
-        // Only for a page that will render the dialog, and free in the common
-        // case — the person sharing a document is usually the one who owns it.
-        ownerEmail: canShare ? await ownerEmail(deps, art, user) : null,
+        ownerEmail: owner?.email ?? null,
+        ownerName: owner?.name ?? null,
+        viewerIsOwner: user !== null && user.id === art.ownerId,
         token: isPublic ? null : mintContentToken(art.id, deps.cfg.secretKey),
         siteUrl: deps.cfg.url,
         workspaceDomain: await workspaceDomain(deps, user, art.workspaceId),
@@ -153,24 +156,25 @@ const page = (c: Context<AppEnv>, html: string, status: 200 | 404) =>
   c.body(html, status, { ...shellPageHeaders(), 'Content-Type': 'text/html; charset=utf-8' })
 
 /**
- * The owner's address, which the share dialog leaves out of its suggestions:
+ * Who owns the document: the first row of the share dialog's "People with
+ * access" list, and the address the dialog leaves out of its suggestions —
  * their access does not come from a grant row and cannot be given by one, so
  * offering them is offering a click the API answers with a 422 (§5.9). Read
- * only for a reader who may share, and only when that reader is not the owner
- * themselves — which is the usual case, and costs no query at all.
+ * only for a reader who may share, and skipped entirely when that reader is the
+ * owner themselves — the usual case, and it costs no query at all.
  */
-async function ownerEmail(
+async function ownerOf(
   deps: Deps,
   art: { ownerId: string },
-  viewer: { id: string; email: string } | null,
-): Promise<string | null> {
-  if (viewer !== null && viewer.id === art.ownerId) return viewer.email
+  viewer: { id: string; email: string; name: string | null } | null,
+): Promise<{ email: string; name: string | null } | null> {
+  if (viewer !== null && viewer.id === art.ownerId) return { email: viewer.email, name: viewer.name }
   const [row] = await deps.db
-    .select({ email: users.email })
+    .select({ email: users.email, name: users.name })
     .from(users)
     .where(eq(users.id, art.ownerId))
     .limit(1)
-  return row?.email ?? null
+  return row ?? null
 }
 
 /**

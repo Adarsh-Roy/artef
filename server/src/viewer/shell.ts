@@ -22,6 +22,12 @@ export interface ShellOpts {
    *  suggestions — their access does not come from a grant row and cannot be
    *  given by one (§5.9). `null` whenever there is no dialog to render. */
   ownerEmail: string | null
+  /** The owner's display name, for the first row of "People with access". Null
+   *  for somebody who has never logged in, whose row falls back to the address. */
+  ownerName: string | null
+  /** Whether the reader is that owner. The dialog opens for an admin too, and an
+   *  admin looking at somebody else's document is not "(you)" (§5.9). */
+  viewerIsOwner: boolean
   /** The content token for the frame, or `null` for a public document, which
    *  needs none (§2.4). */
   token: string | null
@@ -181,10 +187,11 @@ function liveScript(o: ShellOpts, isPublic: boolean): string {
 
 /**
  * Google Docs' share dialog, because every person in the building has already
- * used it: three radios for `visibility`, an email field that writes grant
- * rows, a role dropdown per person, a copy-link button. Nothing else — this is
- * the whole UI the product has, and the reason it can be one file of markup
- * with no build step.
+ * used it — and Docs' anatomy rather than a loose homage, because v0.2 field
+ * testing found the loose version confusing (§5.9). Top to bottom: add people,
+ * the list of who already has it, and general access at the bottom behind a
+ * border. Nothing else — this is the whole UI the product has, and the reason
+ * it can be one file of markup with no build step.
  *
  * Rendered only for the people who may act on it. An owner sees it, an admin
  * sees it, and for everyone else `#share-root` stays the empty div it was.
@@ -196,20 +203,13 @@ function shareDialog(o: ShellOpts, title: string): string {
   // known; the fallback is there so a missing lookup degrades to vague copy
   // rather than to the word "null" in the dialog.
   const domain = o.workspaceDomain ?? 'your workspace'
-  const radio = (value: string, label: string) =>
-    `<label><input type="radio" name="visibility" value="${value}"${
-      o.visibility === value ? ' checked' : ''
-    }> ${esc(label)}</label>`
+  const shown = generalState(o.visibility)
+  const option = (value: string, label: string) =>
+    `<option value="${value}"${shown === value ? ' selected' : ''}>${esc(label)}</option>`
 
   return `
 <dialog id="share-dialog" aria-labelledby="share-title">
 <h2 id="share-title">Share "${esc(title)}"</h2>
-<div class="choices">
-${radio('workspace', `Anyone at ${domain}`)}
-${radio('restricted', 'Only people I choose')}
-${radio('public', 'Anyone with the link')}
-</div>
-<p id="share-only-you"${o.visibility === 'private' ? '' : ' hidden'}>Only you</p>
 <div class="add">
 <label for="share-email">Add people</label>
 <div class="combo">
@@ -219,7 +219,22 @@ ${radio('public', 'Anyone with the link')}
 <select id="share-role" aria-label="Role for the person being added">${ROLE_OPTIONS}</select>
 <button id="share-add" type="button">Add</button>
 </div>
-<ul id="share-people"></ul>
+<section class="people" aria-labelledby="share-people-heading">
+<h3 id="share-people-heading">People with access</h3>
+<ul id="share-people">${ownerRow(o)}</ul>
+</section>
+<section class="general" aria-labelledby="share-general-heading">
+<h3 id="share-general-heading">General access</h3>
+<div class="general-row">
+<select id="share-visibility" aria-label="General access" aria-describedby="share-general-help">
+${option('restricted', 'Only people with access')}
+${option('workspace', `Anyone at ${domain}`)}
+${option('public', 'Anyone with the link')}
+</select>
+<span id="share-general-role" class="fixed-role">can view</span>
+</div>
+<p id="share-general-help">${esc(generalHelp(domain)[shown])}</p>
+</section>
 <p id="share-status" role="status" hidden></p>
 <div class="foot">
 <button id="share-copy" type="button">Copy link</button>
@@ -227,6 +242,46 @@ ${radio('public', 'Anyone with the link')}
 </div>
 </dialog>`
 }
+
+/**
+ * The first row of "People with access": whoever owns the document, named the
+ * way Docs names them and carrying nothing to click. Their access is not a
+ * grant row, so there is no role to set and nothing to revoke (§5.9). The
+ * script keeps this row and appends the grantees after it.
+ *
+ * Written by whoever runs the IdP, which is to say attacker-controlled, so both
+ * halves go through `esc()`.
+ */
+function ownerRow(o: ShellOpts): string {
+  const email = o.ownerEmail ?? ''
+  const name = (o.ownerName ?? '').trim() || email
+  // No lookup, no row: an empty list is better than a row reading "· owner".
+  if (name === '') return ''
+  const label = `${name}${o.viewerIsOwner ? ' (you)' : ''} · owner`
+  // Somebody who has never logged in has no name, and their address is already
+  // on the first line — a second copy of it is noise.
+  const second = name === email ? '' : `<span class="email">${esc(email)}</span>`
+  return `<li id="share-owner" class="owner"><span class="who"><span class="name">${esc(label)}</span>${second}</span></li>`
+}
+
+/** What the general-access dropdown shows for a visibility. `private` is the
+ *  state before anything is shared and reads as "Only people with access" — it
+ *  is not a fourth option, because nobody could say how it differs (§5.9). */
+const generalState = (visibility: ShellOpts['visibility']): 'restricted' | 'workspace' | 'public' =>
+  visibility === 'private' ? 'restricted' : visibility
+
+/**
+ * One line under the dropdown saying plainly what the state does — and, for the
+ * two that are not restricted, that it does not touch the roles above it.
+ * Ambiguity about what a general-access change grants was the exact confusion
+ * v0.2 field testing reported, and this line is half the answer (§5.9). The
+ * other half is the fixed "can view" beside the dropdown.
+ */
+const generalHelp = (domain: string): Record<'restricted' | 'workspace' | 'public', string> => ({
+  restricted: 'Only the people listed above can open this link.',
+  workspace: `Everyone at ${domain} can view. People listed above keep their roles.`,
+  public: 'Anyone on the internet with the link can view. People listed above keep their roles.',
+})
 
 /** "can update", never "can edit" — there is no browser editing, and a dialog
  *  that promises a text cursor is worse than one with an awkward verb (§12.1). */
@@ -256,11 +311,15 @@ function shareScript(o: ShellOpts): string {
   if (!dialog || !openButton) return
   const people = document.getElementById('share-people')
   const statusLine = document.getElementById('share-status')
-  const onlyYou = document.getElementById('share-only-you')
   const emailInput = document.getElementById('share-email')
   const suggestions = document.getElementById('share-suggestions')
   const roleSelect = document.getElementById('share-role')
-  const radios = dialog.querySelectorAll('input[name="visibility"]')
+  const generalSelect = document.getElementById('share-visibility')
+  const helpLine = document.getElementById('share-general-help')
+  /** The owner's row, server-rendered and kept: re-reading the grants replaces
+   *  everything else in the list, and the owner is not in the grants. */
+  const ownerRow = document.getElementById('share-owner')
+  const HELP = ${jsValue(generalHelp(o.workspaceDomain ?? 'your workspace'))}
   let visibility = ${jsString(o.visibility)}
   /** Addresses the dialog will not suggest: everyone already on the list, and
    *  the owner, who cannot be granted anything they do not already have. */
@@ -268,11 +327,15 @@ function shareScript(o: ShellOpts): string {
 
   const say = message => { statusLine.textContent = message; statusLine.hidden = message === '' }
 
-  /** The radios always show what the server holds, never what was clicked. */
+  /** The dropdown always shows what the server holds, never what was clicked —
+   *  and the line under it says what that means. A private document shows as
+   *  "Only people with access": it is the state before anything is shared, not a
+   *  fourth option (§5.9). */
   function showVisibility(value) {
     visibility = value
-    for (const radio of radios) radio.checked = radio.value === value
-    if (onlyYou) onlyYou.hidden = value !== 'private'
+    const state = value === 'private' ? 'restricted' : value
+    generalSelect.value = state
+    helpLine.textContent = HELP[state] || ''
   }
 
   async function call(method, path, body) {
@@ -289,14 +352,32 @@ function shareScript(o: ShellOpts): string {
     throw new Error(message)
   }
 
+  /**
+   * One grantee: name on the first line, address on the second — the same two
+   * lines the suggestions use — and a single dropdown on the right. Removal is
+   * one of its options rather than a separate ×, which is how Docs does it and
+   * where people look for it (§5.9).
+   */
   function personRow(grant) {
     const row = document.createElement('li')
     const who = document.createElement('span')
     who.className = 'who'
-    who.textContent = grant.email
+    const name = document.createElement('span')
+    name.className = 'name'
+    name.textContent = grant.name || grant.email
+    who.appendChild(name)
+    // Somebody pre-provisioned by an earlier grant has no name yet, and their
+    // address is already on the first line — a second copy of it is noise.
+    if (grant.name) {
+      const email = document.createElement('span')
+      email.className = 'email'
+      email.textContent = grant.email
+      who.appendChild(email)
+    }
     const role = document.createElement('select')
-    role.setAttribute('aria-label', 'Role for ' + grant.email)
-    for (const option of [['viewer', 'can view'], ['editor', 'can update']]) {
+    role.className = 'role'
+    role.setAttribute('aria-label', 'Access for ' + grant.email)
+    for (const option of [['viewer', 'can view'], ['editor', 'can update'], ['remove', 'Remove access']]) {
       const choice = document.createElement('option')
       choice.value = option[0]
       choice.textContent = option[1]
@@ -304,17 +385,15 @@ function shareScript(o: ShellOpts): string {
       role.appendChild(choice)
     }
     role.addEventListener('change', () => {
-      run(() => call('POST', '/grants', { email: grant.email, role: role.value }))
+      // 'remove' is not a role and is never sent as one — the branches part
+      // before anything reaches the API.
+      if (role.value === 'remove') {
+        run(() => call('DELETE', '/grants/' + encodeURIComponent(grant.user_id)))
+      } else {
+        run(() => call('POST', '/grants', { email: grant.email, role: role.value }))
+      }
     })
-    const remove = document.createElement('button')
-    remove.type = 'button'
-    remove.className = 'remove'
-    remove.textContent = '\\u00d7'
-    remove.setAttribute('aria-label', 'Remove ' + grant.email)
-    remove.addEventListener('click', () => {
-      run(() => call('DELETE', '/grants/' + encodeURIComponent(grant.user_id)))
-    })
-    row.append(who, role, remove)
+    row.append(who, role)
     return row
   }
 
@@ -332,7 +411,10 @@ function shareScript(o: ShellOpts): string {
     }
     try {
       const grants = await call('GET', '/grants')
-      people.replaceChildren(...grants.map(personRow))
+      // The owner stays first and the grantees follow, in the order the server
+      // gave them — oldest first, so somebody added while the dialog is open
+      // appears at the bottom rather than shuffling the names on screen.
+      people.replaceChildren(...(ownerRow ? [ownerRow] : []), ...grants.map(personRow))
       taken = new Set(owner === '' ? [] : [owner])
       for (const grant of grants) taken.add(String(grant.email).toLowerCase())
     } catch (e) {
@@ -474,7 +556,8 @@ function shareScript(o: ShellOpts): string {
       emailInput.value = ''
       // A private document ignores grants entirely (§4.2), so naming someone
       // while it is private would add a row that grants nothing. Naming a
-      // person IS choosing "only people I choose", and the radio moves to say so.
+      // person IS choosing "only people with access", and the general-access
+      // dropdown already reads that way — this is what makes it true.
       if (visibility === 'private') {
         await call('PATCH', '', { visibility: 'restricted' })
         showVisibility('restricted')
@@ -511,21 +594,19 @@ function shareScript(o: ShellOpts): string {
     }
   })
 
-  for (const radio of radios) {
-    radio.addEventListener('change', () => {
-      const wanted = radio.value
-      run(async () => {
-        try {
-          await call('PATCH', '', { visibility: wanted })
-        } catch (e) {
-          // Put the radios back to what the server still holds.
-          showVisibility(visibility)
-          throw e
-        }
-        showVisibility(wanted)
-      })
+  generalSelect.addEventListener('change', () => {
+    const wanted = generalSelect.value
+    run(async () => {
+      try {
+        await call('PATCH', '', { visibility: wanted })
+      } catch (e) {
+        // Put the dropdown back to what the server still holds.
+        showVisibility(visibility)
+        throw e
+      }
+      showVisibility(wanted)
     })
-  }
+  })
 
   document.getElementById('share-copy').addEventListener('click', async () => {
     try {
@@ -544,9 +625,12 @@ function shareScript(o: ShellOpts): string {
  * is not enough: the HTML parser ends the script at the first `</script`
  * wherever it appears, string literal or not, so `<` is escaped as well.
  */
-function jsString(s: string): string {
-  return JSON.stringify(s).replace(/</g, '\\u003c')
+function jsValue(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c')
 }
+
+/** `jsValue` for the common case, where the value is a string. */
+const jsString = (s: string): string => jsValue(s)
 
 const PROSE_STYLE = `body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:2rem}
 main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem;overflow-wrap:anywhere}p{margin:0 0 1rem;color:#333}`
@@ -566,9 +650,8 @@ body{margin:0;font:14px/1.5 system-ui,sans-serif;display:flex;flex-direction:col
 #share-dialog::backdrop{background:rgba(0,0,0,.35)}
 #share-dialog h2{font-size:1rem;margin:0 0 .75rem;overflow-wrap:anywhere}
 #share-dialog label{display:block}
-#share-dialog .choices{display:grid;gap:.35rem;margin-bottom:.5rem}
-#share-only-you{margin:0 0 .5rem;color:#666}
-#share-dialog .add{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:.75rem 0;padding-top:.75rem;border-top:1px solid #eee}
+#share-dialog h3{font-size:.875rem;margin:1rem 0 .5rem}
+#share-dialog .add{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:0}
 #share-dialog .add label{flex-basis:100%}
 #share-dialog .combo{position:relative;flex:1;min-width:10rem}
 #share-email{width:100%;font:inherit;padding:.35rem .5rem;border:1px solid #ccc;border-radius:.375rem}
@@ -578,10 +661,16 @@ body{margin:0;font:14px/1.5 system-ui,sans-serif;display:flex;flex-direction:col
 #share-suggestions li[aria-selected="true"]{background:#eef2ff}
 #share-suggestions .name{display:block}
 #share-suggestions .email{display:block;color:#666;font-size:.8125rem}
-#share-people{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}
+#share-people{list-style:none;margin:0;padding:0 .25rem 0 0;display:grid;gap:.5rem;max-height:16rem;overflow-y:auto}
 #share-people li{display:flex;align-items:center;gap:.5rem}
-#share-people .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#share-people .remove{line-height:1}
+#share-people .who{flex:1;min-width:0}
+#share-people .name,#share-people .email{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#share-people .email{color:#666;font-size:.8125rem}
+#share-dialog .general{margin-top:1rem;padding-top:.75rem;border-top:1px solid #e3e3e3}
+#share-dialog .general h3{margin-top:0}
+#share-dialog .general-row{display:flex;align-items:center;gap:.5rem}
+#share-general-role{color:#444}
+#share-general-help{margin:.4rem 0 0;color:#666;font-size:.8125rem}
 #share-status{margin:.75rem 0 0;color:#a11}
 #share-dialog .foot{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
 #share-dialog button,#share-dialog select{font:inherit;padding:.3rem .6rem;border:1px solid #ccc;border-radius:.375rem;background:#fff;color:#111;cursor:pointer}`

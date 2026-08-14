@@ -68,8 +68,8 @@ async function makeArtifact(
 }
 
 /** An owner, their artifact with `HTML` already pushed, and a token to push more. */
-async function published(opts: { visibility?: Visibility; name?: string } = {}) {
-  const { user, cookie } = await makeUser(deps)
+async function published(opts: { visibility?: Visibility; name?: string; ownerName?: string } = {}) {
+  const { user, cookie } = await makeUser(deps, { name: opts.ownerName })
   const art = await makeArtifact(user, opts)
   const { header } = await makeMachineToken(deps, user.id)
   const res = await pushHtml(deps, header, art.id, HTML)
@@ -349,38 +349,152 @@ function shareDialog(body: string): string {
 /** What a reader actually sees: tags and attributes removed, text left. */
 const visibleText = (html: string) => html.replace(/<[^>]*>/g, ' ')
 
+/** The owner's row of "People with access", which is the only one the server
+ *  renders — every other row is built from the grants API. */
+function ownerRow(dialog: string): string {
+  const found = /<li id="share-owner"[\s\S]*?<\/li>/.exec(dialog)
+  expect(found, 'no owner row in the share dialog').not.toBeNull()
+  return found![0]
+}
+
 describe('the share dialog', () => {
-  it('offers the three visibility radios, naming the workspace', async () => {
+  // §5.9 anatomy: Docs' dialog, in Docs' order — add people, the list of who
+  // already has it, then general access at the bottom.
+  it('is laid out as add people, People with access, then General access', async () => {
     const { art, cookie } = await published({ visibility: 'workspace' })
 
     const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    const text = visibleText(dialog)
     expect(dialog).toContain('id="share-dialog"')
-    expect(dialog).toContain('Anyone at example.com')
-    expect(dialog).toContain('Only people I choose')
-    expect(dialog).toContain('Anyone with the link')
-    // The one that is true is the one that is checked.
-    expect(dialog).toMatch(/value="workspace"[^>]*checked/)
-    expect(dialog).not.toMatch(/value="public"[^>]*checked/)
-    expect(dialog).not.toMatch(/value="restricted"[^>]*checked/)
+    expect(text).toContain('Add people')
+    expect(text).toContain('People with access')
+    expect(text).toContain('General access')
+
+    const add = dialog.indexOf('id="share-email"')
+    const people = dialog.indexOf('People with access')
+    const general = dialog.indexOf('General access')
+    expect(add).toBeLessThan(people)
+    expect(people).toBeLessThan(general)
   })
 
-  it('checks no radio at all for a private document, and says "Only you"', async () => {
+  it('names the owner on the first row, with "(you)" and no controls', async () => {
+    const { art, cookie, user } = await published({ ownerName: 'Priya Nair' })
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    const row = ownerRow(dialog)
+    expect(visibleText(row)).toContain('Priya Nair (you) · owner')
+    expect(row).toContain(esc(user.email))
+    // Their access is not a grant row and cannot be changed by one, so the row
+    // carries nothing to click (§5.9).
+    expect(row).not.toContain('<select')
+    expect(row).not.toContain('<button')
+    // First in the list, before any grantee the script appends.
+    expect(dialog).toMatch(/<ul id="share-people"><li id="share-owner"/)
+  })
+
+  it('drops the "(you)" for an admin looking at somebody else\'s document', async () => {
+    const { art, user } = await published({ ownerName: 'Priya Nair' })
+    const admin = await makeUser(deps, { isAdmin: true })
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: admin.cookie })).text())
+    const row = ownerRow(dialog)
+    expect(visibleText(row)).toContain('Priya Nair · owner')
+    expect(row).not.toContain('(you)')
+    expect(row).toContain(esc(user.email))
+  })
+
+  it('gives every grantee one dropdown that sets the role and also removes them', async () => {
+    const { art, cookie } = await published({ visibility: 'restricted' })
+
+    const body = await (await shell(art.id, { Cookie: cookie })).text()
+    // Removal lives in the dropdown, exactly as Docs does it (§5.9).
+    expect(body).toContain('Remove access')
+    expect(body).toContain("call('DELETE', '/grants/' + encodeURIComponent(grant.user_id))")
+    expect(body).toContain("call('POST', '/grants', { email: grant.email, role: role.value })")
+    // …so the separate × button is gone.
+    expect(body).not.toContain('\\u00d7')
+    expect(body).not.toContain("className = 'remove'")
+    // Two lines per row, the same shape the suggestions use.
+    expect(body).toContain('.textContent = grant.name')
+    expect(body).toContain('.textContent = grant.email')
+  })
+
+  it('keeps the people list scrollable, so fifty grantees stay usable', async () => {
+    const { art, cookie } = await published()
+
+    const body = await (await shell(art.id, { Cookie: cookie })).text()
+    expect(body).toMatch(/#share-people\{[^}]*max-height:16rem[^}]*overflow-y:auto/)
+  })
+
+  it('offers the three general-access states in one dropdown, naming the workspace', async () => {
+    const { art, cookie } = await published({ visibility: 'workspace' })
+
+    const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
+    expect(dialog).toContain('id="share-visibility"')
+    const text = visibleText(dialog)
+    expect(text).toContain('Only people with access')
+    expect(text).toContain('Anyone at example.com')
+    expect(text).toContain('Anyone with the link')
+    // The one that is true is the one that is selected.
+    expect(dialog).toMatch(/value="workspace"[^>]*selected/)
+    expect(dialog).not.toMatch(/value="public"[^>]*selected/)
+    expect(dialog).not.toMatch(/value="restricted"[^>]*selected/)
+    // The radios are gone: general access is one dropdown now (§5.9 anatomy).
+    expect(dialog).not.toContain('type="radio"')
+  })
+
+  it('shows a private document as "Only people with access", never as a fourth state', async () => {
     const { art, cookie } = await published()
 
     const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
     // §5.9: private is the state before anything is shared. It is not a fourth
     // option, because nobody could say how it differs from "only people I choose".
     expect(dialog).not.toContain('value="private"')
-    expect(dialog).not.toContain('checked')
-    expect(visibleText(dialog)).toContain('Only you')
+    expect(dialog).toMatch(/value="restricted"[^>]*selected/)
+    // And the first grant added to it still moves it to restricted by itself.
+    const body = await (await shell(art.id, { Cookie: cookie })).text()
+    expect(body).toContain("if (visibility === 'private')")
+    expect(body).toContain("await call('PATCH', '', { visibility: 'restricted' })")
   })
 
-  it('says nothing about "Only you" once the document is shared', async () => {
-    const { art, cookie } = await published({ visibility: 'restricted' })
+  it('pins general access to "can view", as a label and not a control', async () => {
+    const { art, cookie } = await published({ visibility: 'public' })
 
     const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
-    expect(dialog).toMatch(/value="restricted"[^>]*checked/)
-    expect(dialog).toMatch(/id="share-only-you"[^>]*hidden/)
+    // Workspace-wide and link access are always view-only; update rights are
+    // per-person and nothing else (§4.2, §5.9).
+    const fixed = /<span id="share-general-role"[^>]*>([^<]*)<\/span>/.exec(dialog)
+    expect(fixed, 'no fixed general-access role label').not.toBeNull()
+    expect(fixed![1]).toBe('can view')
+    // One select in the general-access section, and it is the visibility one.
+    const general = /<section class="general"[\s\S]*?<\/section>/.exec(dialog)!
+    expect(general[0].match(/<select/g)).toHaveLength(1)
+  })
+
+  it('spells out what each general-access state means, and updates the line on change', async () => {
+    const lines: Record<string, string> = {
+      restricted: 'Only the people listed above can open this link.',
+      workspace: 'Everyone at example.com can view. People listed above keep their roles.',
+      public:
+        'Anyone on the internet with the link can view. People listed above keep their roles.',
+    }
+
+    for (const [visibility, line] of Object.entries(lines)) {
+      const { art, cookie } = await published({ visibility: visibility as Visibility })
+      const body = await (await shell(art.id, { Cookie: cookie })).text()
+      const dialog = shareDialog(body)
+      // Server-rendered for the state the server holds…
+      expect(visibleText(dialog), visibility).toContain(line)
+      expect(dialog, visibility).toContain('id="share-general-help"')
+      // …and carried in the script, so picking another state rewrites the line
+      // without a reload. Ambiguity here is the confusion field testing found.
+      expect(body, visibility).toContain(line)
+    }
+
+    // A private document reads as restricted here too.
+    const priv = await published()
+    expect(visibleText(shareDialog(await (await shell(priv.art.id, { Cookie: priv.cookie })).text())))
+      .toContain(lines.restricted)
   })
 
   it('labels the roles "can view" and "can update", and never "can edit"', async () => {
@@ -459,6 +573,16 @@ describe('the share dialog', () => {
     const dialog = shareDialog(await (await shell(art.id, { Cookie: cookie })).text())
     expect(dialog).toContain(esc(XSS_NAME))
     expect(dialog).not.toContain(XSS_NAME)
+  })
+
+  it('escapes an owner name written by whoever runs the IdP', async () => {
+    const { art, cookie } = await published({ ownerName: XSS_NAME })
+
+    const body = await (await shell(art.id, { Cookie: cookie })).text()
+    const row = ownerRow(shareDialog(body))
+    expect(row).toContain(esc(XSS_NAME))
+    expect(row).not.toContain(XSS_NAME)
+    expect(body).not.toContain('alert(1)</script>')
   })
 })
 
