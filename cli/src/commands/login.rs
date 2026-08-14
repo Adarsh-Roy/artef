@@ -27,10 +27,12 @@ use url::Url;
 use crate::api::ApiClient;
 use crate::config::{self, GlobalConfig};
 
-/// How long the browser round-trip gets before the CLI gives up. Long enough to find a
-/// password manager and a second factor, short enough that a forgotten terminal frees
-/// its port the same afternoon.
-const WAIT: Duration = Duration::from_secs(180);
+/// How long the browser round-trip gets before the CLI gives up. Ten minutes, because the
+/// browser half is not one click: it can be a full SSO round-trip through an identity
+/// provider, a password manager, a phone for the second factor, and sometimes a browser on
+/// a different machine entirely. Three minutes ran out in the middle of that. It is still
+/// bounded, so a terminal someone walked away from frees its port the same afternoon.
+const WAIT: Duration = Duration::from_secs(600);
 
 /// 24 random bytes are exactly 32 base64url characters, with no padding to escape.
 const STATE_BYTES: usize = 24;
@@ -484,6 +486,15 @@ mod tests {
         let printed = String::from_utf8(out).unwrap();
         assert!(printed.contains("/cli/auth?port="), "printed {printed}");
         assert!(printed.contains("no browser here"), "printed {printed}");
+    }
+
+    /// The tests above all inject a wait of their own so they finish quickly, which
+    /// leaves the real one unchecked by everything else here. Signing in can mean a
+    /// whole SSO round-trip and a second factor on a phone, so the window a real user
+    /// gets is ten minutes.
+    #[test]
+    fn a_real_login_gets_ten_minutes_to_finish() {
+        assert_eq!(WAIT, Duration::from_secs(600));
     }
 
     #[test]
