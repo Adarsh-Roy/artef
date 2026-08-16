@@ -1,11 +1,7 @@
 <h1 align="center">artef</h1>
 
 <p align="center">
-Self-hosted HTML document sharing with workspace access control, for any agent harness.
-</p>
-
-<p align="center">
-One container image. Deploys in about fifteen minutes.
+Self-hosted HTML document sharing for any agents (mostly).
 </p>
 
 ---
