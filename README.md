@@ -41,6 +41,30 @@ renews the TLS certificate. Serve artef at the root of its domain
 (`https://artef.company.com/`, not `https://host/artef`); asset URLs and short
 links are root-relative.
 
+### Versions
+
+`docker-compose.yml` pins a released version. Published tags are listed on the
+[package page](https://github.com/Adarsh-Roy/artef/pkgs/container/artef); each
+release also appears under
+[Releases](https://github.com/Adarsh-Roy/artef/releases), which is where the CLI
+binaries are attached. Images are built for `linux/amd64` and `linux/arm64`.
+
+To run a different version, set it in `.env`:
+
+```bash
+ARTEF_VERSION=0.2.1   # or `latest` to track the most recent release
+```
+
+To upgrade, change that value and:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Migrations for the new version run on boot. To roll back, set the previous
+version and repeat — note that migrations are not reversed, so a rollback across
+a schema change needs a database restored from backup.
+
 ## Use
 
 ### From an agent (MCP)

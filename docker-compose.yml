@@ -23,10 +23,16 @@ services:
       - app
 
   app:
-    # Published release image (built by .github/workflows/release.yml from the
-    # repo Dockerfile). For a source deploy, comment `image:` and uncomment:
+    # Published release image, built by .github/workflows/release.yml from the
+    # repo Dockerfile. Pinned to a version on purpose: `docker compose pull`
+    # then fetches exactly this build, and upgrading is an edit you make and can
+    # revert. Set ARTEF_VERSION in .env to override it; `latest` tracks the most
+    # recent release. Available versions:
+    # https://github.com/Adarsh-Roy/artef/pkgs/container/artef
+    #
+    # To build from source instead, comment the `image:` line and uncomment:
     # build: .
-    image: ghcr.io/adarsh-roy/artef:0.2.1
+    image: ghcr.io/adarsh-roy/artef:${ARTEF_VERSION:-0.2.1}
     restart: unless-stopped
     env_file: .env
     environment:
