@@ -53,16 +53,21 @@ lint/push/share, CSP sandbox invariant over TLS, SSE `hello`→`updated` through
 MCP initialize/tools/publish, and a CLI v2 push onto the MCP-created document (adopted by
 hand-writing `.artef.json` — it is designed for that).
 
-**Instance `i-095288f33cfef942d` is STOPPED** (2026-08-16, user decision): the next
-deployment moves to Oracle Cloud's always-free tier (Ampere A1 arm64 — the multi-arch
-image covers it). The 20 GiB volume persists; the public IP was released, so any
-restart gets a new IP and needs the Cloudflare A record updated. All
-artef.adarshroy.fyi links (including the pitch doc at
-/1aee3049-9d45-4146-b122-f494b8688a1e) are dead until the next deploy. `.artef.json`
-at the repo root still maps `docs/pitch/deploying-artef.html` to that artifact id,
-which survives only if the same database volume comes back — a fresh Oracle deploy
-means a fresh push and a new link. The Oracle runbook (incl. the VCN + host-iptables
-gotchas) lives in the local notes: `.claude/notes-consumer-signin.md` (untracked).
+**Live demo box (2026-08-16 night): `i-042745fe2afa6e399` (artef-demo-2)**, t3.micro,
+eu-north-1b, 16.171.254.48, running `ghcr.io/adarsh-roy/artef:0.2.1` behind
+artef.adarshroy.fyi. Launched fresh because eu-north-1a ran out of t3.micro capacity —
+the older stopped instance `i-095288f33cfef942d` still exists (stopped, stale data,
+safe to terminate). The v0.2.x OAuth flow is **verified live end to end** by a scripted
+OAuth client (DCR → consent → PKCE exchange → MCP call → refresh rotation) and by
+Claude Code's real client up through DCR + authorize URL ("Needs authentication" in
+`claude mcp list`; `claude mcp login artef` completes it — needs an interactive
+terminal). Database is fresh: user1 seeded by hand; the pitch doc is NOT republished
+on this box yet. Oracle migration remains parked in the local notes
+(`.claude/notes-consumer-signin.md`) — blocked on OCI account + Chrome extension site
+access. CI note: qemu is pinned to v8.1.5 in the release workflow — newer qemu
+SIGILLs Node during the arm64 pnpm install whenever that layer goes cold (killed the
+first v0.2.1 run); if the repo goes public, free native arm runners
+(`ubuntu-24.04-arm`) are the better fix.
 
 Field notes from the re-test: macOS Gatekeeper SIGKILLs the downloaded release binary
 (unsigned; browser download adds `com.apple.quarantine` — one kill even auto-removed the
