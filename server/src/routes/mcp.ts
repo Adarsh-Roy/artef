@@ -30,11 +30,12 @@ import type { AppEnv, Deps } from '../app.js'
 import { sha256Hex } from '../lib/crypto.js'
 import { gzipBuf } from '../lib/gzip.js'
 import { mcpAuthChallenge } from '../lib/headers.js'
+import { serverVersion } from '../lib/version.js'
 import { preflight, type Violation } from '../lib/preflight.js'
 
 /** What the agent sees in the handshake. Kept in step with the package version
  *  by hand — it identifies the server, it is not a protocol negotiation. */
-const SERVER_VERSION = '0.1.0'
+const SERVER_VERSION = serverVersion()
 
 /**
  * The one rule an agent has to know before it generates anything, said once at

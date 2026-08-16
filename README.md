@@ -71,7 +71,7 @@ trip macOS Gatekeeper on unsigned binaries), or build from source with
 `cargo build --release` in `cli/`:
 
 ```bash
-V=v0.2.0
+V=v0.2.1
 T=aarch64-apple-darwin   # or: x86_64-apple-darwin, x86_64-unknown-linux-musl
 curl -fsSL "https://github.com/Adarsh-Roy/artef/releases/download/$V/artef-$V-$T.tar.gz" | tar xz
 sudo mv artef /usr/local/bin/   # or anywhere on your PATH

@@ -11,6 +11,7 @@
 //   - every tool is an adapter over the REST API, so the ACL, the token scope
 //     and the wire shapes are the ones `/api` already enforces — and a refusal
 //     comes back as tool data the agent can read, never as a protocol error.
+import { readFileSync } from 'node:fs'
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -130,6 +131,27 @@ describe('/mcp requires a machine token', () => {
     })
     expect(res.status).toBe(401)
     expect(await res.json()).toEqual({ error: 'unauthorized' })
+  })
+
+  it('introduces itself with the version from package.json — never a constant', async () => {
+    const { user } = await makeUser(deps)
+    const { header } = await makeMachineToken(deps, user.id)
+    const res = await deps.app.request('/mcp', {
+      method: 'POST',
+      headers: { ...header, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '0' } },
+      }),
+    })
+    expect(res.status).toBe(200)
+    const { result } = (await res.json()) as { result: { serverInfo: { name: string; version: string } } }
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      version: string
+    }
+    expect(result.serverInfo).toEqual({ name: 'artef', version: manifest.version })
   })
 
   it('offers no server-to-client stream, because it holds no session', async () => {
