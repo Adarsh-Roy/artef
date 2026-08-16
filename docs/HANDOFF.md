@@ -53,14 +53,16 @@ lint/push/share, CSP sandbox invariant over TLS, SSE `hello`→`updated` through
 MCP initialize/tools/publish, and a CLI v2 push onto the MCP-created document (adopted by
 hand-writing `.artef.json` — it is designed for that).
 
-**Currently RUNNING:** instance `i-095288f33cfef942d` (t3.micro, eu-north-1, 56.228.3.184,
-key `artef-demo`, SG `launch-wizard-2`), `artef.adarshroy.fyi` → that IP (Cloudflare,
-DNS only). Free tier covers it (750 t3.micro-hours + 750 public-IPv4-hours + 30 GiB EBS
-per month, first year). The refreshed pitch doc is live at
-https://artef.adarshroy.fyi/1aee3049-9d45-4146-b122-f494b8688a1e (public link);
-`.artef.json` at the repo root maps `docs/pitch/deploying-artef.html` to it, so
-`artef push docs/pitch/deploying-artef.html` from the repo root updates it in place.
-Links die when the instance is terminated (teardown: step 8 below).
+**Instance `i-095288f33cfef942d` is STOPPED** (2026-08-16, user decision): the next
+deployment moves to Oracle Cloud's always-free tier (Ampere A1 arm64 — the multi-arch
+image covers it). The 20 GiB volume persists; the public IP was released, so any
+restart gets a new IP and needs the Cloudflare A record updated. All
+artef.adarshroy.fyi links (including the pitch doc at
+/1aee3049-9d45-4146-b122-f494b8688a1e) are dead until the next deploy. `.artef.json`
+at the repo root still maps `docs/pitch/deploying-artef.html` to that artifact id,
+which survives only if the same database volume comes back — a fresh Oracle deploy
+means a fresh push and a new link. The Oracle runbook (incl. the VCN + host-iptables
+gotchas) lives in the local notes: `.claude/notes-consumer-signin.md` (untracked).
 
 Field notes from the re-test: macOS Gatekeeper SIGKILLs the downloaded release binary
 (unsigned; browser download adds `com.apple.quarantine` — one kill even auto-removed the
