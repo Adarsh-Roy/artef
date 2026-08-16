@@ -18,7 +18,7 @@ sandbox that cannot reach your session or the network.
   sign in. See [Sign-in](#sign-in).
 - **Sandbox.** Documents render under `sandbox allow-scripts` (never
   `allow-same-origin`) with `connect-src 'none'` and `form-action 'none'`. Inline
-  JavaScript runs; nothing leaves the page. See [`artef-spec.md` §2](./artef-spec.md).
+  JavaScript runs; nothing leaves the page.
 - **Live updates.** A new version pushes to open tabs over SSE.
 - **Two interfaces.** An MCP server at `/mcp` for agents, and a CLI for scripted
   and scheduled pushes.

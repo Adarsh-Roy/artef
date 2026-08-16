@@ -8,3 +8,6 @@ target/
 # Local runtime / editor scratch — never part of the repo
 .claude/
 server/seed-demo.ts
+
+# Internal design spec — kept locally, not published
+artef-spec.md
