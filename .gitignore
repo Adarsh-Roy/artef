@@ -9,5 +9,9 @@ target/
 .claude/
 server/seed-demo.ts
 
-# Internal design spec — kept locally, not published
+# Internal — kept locally, never published: the design spec, the handoff
+# notes, the implementation plans, the pitch material, and the local
+# file->artifact mapping for whatever deployment this checkout pushes to.
 artef-spec.md
+docs/
+.artef.json
