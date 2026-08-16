@@ -1,112 +1,112 @@
-# artef
+<h1 align="center">artef</h1>
 
-Self-hostable service for the HTML documents your agents already generate: push
-a file, get a private link, share it like a Google Doc. One domain, one
-container image, behind your existing Google (or any OIDC) login.
+<p align="center">
+Self-hosted HTML document sharing with workspace access control, for any agent harness.
+</p>
 
-Agents produce finished HTML constantly — reports, dashboards, writeups — and it
-lands as attachments, gists, or pastes into chat. artef gives those documents a
-home with the two properties none of that combines: **real access control**
-(workspace SSO, per-person grants, link sharing) and **safe execution** (every
-document runs in a CSP sandbox that cannot read your session or send a byte
-anywhere).
+<p align="center">
+One container image. Deploys in about fifteen minutes.
+</p>
 
-## What you get
+---
 
-- **Private links, shared like docs** — private, specific people, workspace-wide,
-  or public; checked on every request; a link never confirms a document exists
-  to someone without access.
-- **A hard sandbox** — documents render under `sandbox allow-scripts` (never
-  `allow-same-origin`) with `connect-src 'none'` and `form-action 'none'`:
-  inline JavaScript runs, exfiltration doesn't. The invariant has its own
-  release-gate test. Full reasoning in [`artef-spec.md` §2](./artef-spec.md).
-- **Live documents** — `artef watch` re-pushes a regenerated file on an
-  interval; open tabs update over SSE.
-- **Agent-native** — an MCP server at `/mcp` (publish/update/share as typed
-  tools), a CLI for the same API, and an agent skill that teaches the sandbox
-  rules, installed automatically.
-- **One image** — server, viewer, MCP, and migrations in
-  `ghcr.io/adarsh-roy/artef`; Postgres and Caddy beside it in one compose file.
+Agents generate finished HTML — reports, dashboards, writeups. artef stores those
+documents behind your existing SSO, gives each one a link, and renders them in a
+sandbox that cannot reach your session or the network.
+
+- **Access control.** Private, specific people, workspace-wide, or public. Checked
+  on every request. A link does not confirm a document exists to someone without
+  access.
+- **Sandbox.** Documents render under `sandbox allow-scripts` (never
+  `allow-same-origin`) with `connect-src 'none'` and `form-action 'none'`. Inline
+  JavaScript runs; nothing leaves the page. See [`artef-spec.md` §2](./artef-spec.md).
+- **Live updates.** A new version pushes to open tabs over SSE.
+- **Two interfaces.** An MCP server at `/mcp` for agents, and a CLI for scripted
+  and scheduled pushes.
+- **One image.** Server, viewer, MCP, and migrations in `ghcr.io/adarsh-roy/artef`,
+  with Postgres and Caddy in the same compose file.
 
 ## Deploy
 
-Fifteen minutes for anyone who has deployed
-[Outline](https://www.getoutline.com/) before: one DNS record, one OAuth
-client, a handful of env vars, `docker compose up`.
+1. **DNS.** An A record for `artef.company.com` pointing at the server.
+2. **OAuth client.** One Google OAuth client (Google Cloud Console → APIs &
+   Services → Credentials), authorized redirect URI
+   `https://artef.company.com/auth/google/callback`. Any OIDC provider works
+   instead — see `.env.example`.
+3. **Config.** `cp .env.example .env` and set the six values it marks.
+4. **Run.** `docker compose up -d`.
 
-1. **DNS.** One A record for `artef.company.com` pointing at the server.
-2. **OAuth.** One Google OAuth client (Google Cloud Console → APIs & Services →
-   Credentials) with authorized redirect URI
-   `https://artef.company.com/auth/google/callback`.
-3. **Env.** `cp .env.example .env` and fill in the six values it flags.
-4. **Run.** `docker compose up -d` — pulls the published multi-arch image,
-   runs migrations on boot, and Caddy fetches and renews TLS on its own.
+The image is pulled from GHCR, migrations run on boot, and Caddy obtains and
+renews the TLS certificate. Serve artef at the root of its domain
+(`https://artef.company.com/`, not `https://host/artef`); asset URLs and short
+links are root-relative.
 
-No second domain, no wildcard certificate, no sidecars. Serve artef at the
-**root** of its domain (`https://artef.company.com/`, not `https://host/artef`):
-asset URLs and short links are root-relative.
+## Use
 
-## Connect an agent (MCP)
-
-Nothing to install. The MCP server lives at `/mcp` on the deployment itself,
-with OAuth sign-in built in:
+### From an agent (MCP)
 
 ```bash
 claude mcp add --transport http artef https://artef.company.com/mcp
 ```
 
-On first use the agent reports that the server needs authentication; approving
-opens the browser, you confirm on a page that reuses your normal SSO session,
-and the harness holds and refreshes its own token from then on. The tools —
-`publish_artifact`, `update_artifact`, `get_artifact`, `get_content`,
-`list_artifacts`, `set_visibility`, `grant_access` — validate documents
-server-side and return violations as data the agent can fix and retry. Revoke
-the connection any time by deleting the `mcp: …` token from your token list.
+The server reports that it needs authentication. Approving opens a browser,
+you confirm on a page that uses your normal SSO session, and the harness stores
+and refreshes its own token — nothing is pasted into a config file. Revoke access
+by deleting the `mcp: …` token from your token list.
 
-## Install the CLI (optional)
+Tools: `publish_artifact`, `update_artifact`, `get_artifact`, `get_content`,
+`list_artifacts`, `set_visibility`, `grant_access`. Documents are validated
+against the sandbox rules before they are written, and a rejection lists the
+violations so the agent can correct them.
 
-For `artef watch` (re-push a regenerated file on an interval), CI pipelines,
-and pushing by hand. Download with `curl`, not the browser (browser downloads
-trip macOS Gatekeeper on unsigned binaries), or build from source with
-`cargo build --release` in `cli/`:
+### From the command line (CLI)
+
+The CLI covers what MCP cannot: pushing on a schedule with no agent session
+running, and CI. `artef watch` regenerates and re-pushes a file on an interval,
+so open tabs stay current without anything watching them:
+
+```bash
+artef watch report.html --every 5m --cmd "python build_report.py"
+```
+
+Install from a release. Use `curl` rather than a browser download, which marks
+unsigned binaries as quarantined on macOS:
 
 ```bash
 V=v0.2.1
 T=aarch64-apple-darwin   # or: x86_64-apple-darwin, x86_64-unknown-linux-musl
 curl -fsSL "https://github.com/Adarsh-Roy/artef/releases/download/$V/artef-$V-$T.tar.gz" | tar xz
-sudo mv artef /usr/local/bin/   # or anywhere on your PATH
+sudo mv artef /usr/local/bin/
 ```
 
-Then:
+Or build from source: `cargo build --release` in `cli/`.
 
 ```bash
-artef login --server https://artef.company.com   # opens a browser, stores a machine token
-artef push report.html                            # create or update, prints the link
+artef login --server https://artef.company.com
+artef push report.html
 artef share --email teammate@company.com report.html
 ```
 
-`artef lint report.html` checks a file against the sandbox rules before you
-push; `push` runs the same check on its own. See `artef --help` for `ls`,
-`open`, `pull`, `rm`, and `watch`. On its first run the CLI also registers the
-**agent skill** ([`skill/SKILL.md`](./skill/SKILL.md)) for Claude Code and
-Codex, so an agent generating documents locally knows the everything-inline
-rules.
+`artef lint` checks a file against the sandbox rules; `push` runs the same check.
+See `artef --help` for `ls`, `open`, `pull`, `rm`, and `watch`. On first run the
+CLI installs the agent skill ([`skill/SKILL.md`](./skill/SKILL.md)) for Claude
+Code and Codex.
 
 ## Development
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d   # postgres only, on localhost:5433
-cd server && pnpm i && pnpm test                  # server tests (vitest)
-cd ../cli && cargo test                           # CLI tests
+docker compose -f docker-compose.dev.yml up -d   # postgres on localhost:5433
+cd server && pnpm i && pnpm test
+cd ../cli && cargo test
 ```
 
-The server is TypeScript (Hono, Drizzle, Postgres); the CLI is Rust.
+Server: TypeScript (Hono, Drizzle, Postgres). CLI: Rust.
 
 ## Roadmap
 
-Shipped: push/serve on one origin, the sandbox and its invariant test, the CLI,
-visibility and sharing, live documents (`watch` + SSE), content-addressed asset
-extraction, the MCP server with OAuth sign-in, and the tagged-release pipeline
-(image + CLI binaries). Still ahead: an S3 blob backend, version-history
-browsing, reverse-proxy (`AUTH_MODE=proxy`) authentication, and optional
-Cloudflare adapters.
+Shipped: document push and serving, the sandbox and its invariant test,
+visibility and sharing, live updates over SSE, content-addressed asset
+extraction, the MCP server with OAuth, the CLI, and tagged releases.
+
+Planned: S3 blob storage, version history browsing, reverse-proxy
+authentication (`AUTH_MODE=proxy`), Cloudflare adapters.
