@@ -35,15 +35,41 @@ Linux x86_64 musl static), and a GitHub release carrying the tarballs. Run #1 on
 `image: ghcr.io/adarsh-roy/artef:0.1.0` (`build: .` stays as the commented source path).
 Plan: `docs/superpowers/plans/2026-08-16-ghcr-release-workflow.md`.
 
-Still manual after each FIRST publish: the ghcr package starts Private and GitHub has
-no API for container visibility — flip it at
-github.com/users/Adarsh-Roy/packages/container/artef/settings → Danger zone → Change
-visibility → Public, then verify `docker pull ghcr.io/adarsh-roy/artef:0.1.0` works
-with no login. The pitch doc's image table + footer are refreshed in the repo; serving
-the updated page again means redoing the EC2 deployment below (it can now skip the
-source rsync/swapfile and just pull the image). Note for agents: `gh` on this machine
-cannot see this private repo (its active account has no access) — check CI via the
-browser instead.
+The package is **public** (flipped by hand 2026-08-16 — GitHub has no API for container
+visibility; each brand-new package repeats that one click at
+github.com/users/Adarsh-Roy/packages/container/artef/settings). Verified: anonymous
+`docker pull ghcr.io/adarsh-roy/artef:0.1.0` works, manifest carries amd64 + arm64.
+Note for agents: `gh` on this machine cannot see this private repo (its active account
+has no access) — check CI via the browser instead.
+
+## Done 2026-08-16 (same day, later): full EC2 re-test with the release artifacts
+
+The runbook below was re-run end to end using ONLY shipped artifacts — image-pull deploy
+(no swapfile, no rsync, no source build; stack up in under a minute on a fresh t3.micro)
+plus the released macOS arm64 CLI tarball. Whole battery passed: anonymous pull,
+image boot + migrations on fresh Postgres, Let's Encrypt over tls-alpn-01, http→https 308,
+OIDC redirect with PKCE behind the proxy, fresh `artef login` (loopback + code exchange),
+lint/push/share, CSP sandbox invariant over TLS, SSE `hello`→`updated` through Caddy,
+MCP initialize/tools/publish, and a CLI v2 push onto the MCP-created document (adopted by
+hand-writing `.artef.json` — it is designed for that).
+
+**Currently RUNNING:** instance `i-095288f33cfef942d` (t3.micro, eu-north-1, 56.228.3.184,
+key `artef-demo`, SG `launch-wizard-2`), `artef.adarshroy.fyi` → that IP (Cloudflare,
+DNS only). Free tier covers it (750 t3.micro-hours + 750 public-IPv4-hours + 30 GiB EBS
+per month, first year). The refreshed pitch doc is live at
+https://artef.adarshroy.fyi/1aee3049-9d45-4146-b122-f494b8688a1e (public link);
+`.artef.json` at the repo root maps `docs/pitch/deploying-artef.html` to it, so
+`artef push docs/pitch/deploying-artef.html` from the repo root updates it in place.
+Links die when the instance is terminated (teardown: step 8 below).
+
+Field notes from the re-test: macOS Gatekeeper SIGKILLs the downloaded release binary
+(unsigned; browser download adds `com.apple.quarantine` — one kill even auto-removed the
+file). `xattr -c` clears it; signing/notarization or a brew tap is the real fix and worth
+doing before pitching the CLI download path. Also: to run the CLI
+with isolated state, set `XDG_CONFIG_HOME` — that's the knob `config.rs::config_dir`
+honors first; a `HOME=` prefix did not isolate it in this test and the login wrote the
+real `~/.config/artef/config.toml` (harmless here: the entry it replaced pointed at the
+previous, terminated deployment).
 
 ## How to redo the EC2 deployment (agent-executable)
 
