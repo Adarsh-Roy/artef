@@ -1,7 +1,7 @@
 <h1 align="center">artef</h1>
 
 <p align="center">
-Self-hosted HTML document sharing for any agents (mostly).
+Self-hosted HTML document sharing for agents (mostly).
 </p>
 
 ---
