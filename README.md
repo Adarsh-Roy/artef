@@ -17,6 +17,9 @@ sandbox that cannot reach your session or the network.
 - **Access control.** Private, specific people, workspace-wide, or public. Checked
   on every request. A link does not confirm a document exists to someone without
   access.
+- **Sign-in.** Google Workspace, or any OIDC provider. Accounts belong to a
+  workspace by email domain, so consumer accounts (gmail.com and similar) cannot
+  sign in. See [Sign-in](#sign-in).
 - **Sandbox.** Documents render under `sandbox allow-scripts` (never
   `allow-same-origin`) with `connect-src 'none'` and `form-action 'none'`. Inline
   JavaScript runs; nothing leaves the page. See [`artef-spec.md` §2](./artef-spec.md).
@@ -31,8 +34,8 @@ sandbox that cannot reach your session or the network.
 1. **DNS.** An A record for `artef.company.com` pointing at the server.
 2. **OAuth client.** One Google OAuth client (Google Cloud Console → APIs &
    Services → Credentials), authorized redirect URI
-   `https://artef.company.com/auth/google/callback`. Any OIDC provider works
-   instead — see `.env.example`.
+   `https://artef.company.com/auth/google/callback`. For a different provider,
+   see [Sign-in](#sign-in).
 3. **Config.** `cp .env.example .env` and set the six values it marks.
 4. **Run.** `docker compose up -d`.
 
@@ -40,6 +43,26 @@ The image is pulled from GHCR, migrations run on boot, and Caddy obtains and
 renews the TLS certificate. Serve artef at the root of its domain
 (`https://artef.company.com/`, not `https://host/artef`); asset URLs and short
 links are root-relative.
+
+### Sign-in
+
+Set `ALLOWED_DOMAINS` to the email domains that may sign in. Everyone at a domain
+shares one workspace, which is what workspace-wide sharing and the people
+autocomplete are scoped to. Consumer domains (gmail.com, outlook.com, and
+similar) are rejected: a workspace built from one would put strangers in the same
+sharing scope. Several domains can be folded into one workspace with
+`WORKSPACE_DOMAIN_MAP`.
+
+Two provider configurations are supported:
+
+- **Google Workspace** — `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. This is
+  the path that has been tested against a live provider.
+- **Any OIDC provider** — `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`,
+  `OIDC_CLIENT_SECRET`, and optionally `OIDC_DISPLAY_NAME`. The issuer must serve
+  discovery at `/.well-known/openid-configuration`; the redirect URI is
+  `https://artef.company.com/auth/oidc/callback`. Implemented and covered by
+  tests, but not yet verified against a real deployment of Okta, Entra ID, or
+  Authentik — expect to report rough edges.
 
 ### Versions
 
@@ -132,5 +155,8 @@ Shipped: document push and serving, the sandbox and its invariant test,
 visibility and sharing, live updates over SSE, content-addressed asset
 extraction, the MCP server with OAuth, the CLI, and tagged releases.
 
-Planned: S3 blob storage, version history browsing, reverse-proxy
-authentication (`AUTH_MODE=proxy`), Cloudflare adapters.
+Planned: verified support for OIDC providers beyond Google (Okta, Entra ID,
+Authentik), guest access so people outside the workspace — including consumer
+accounts — can be granted a document by email, S3 blob storage, version history
+browsing, reverse-proxy authentication (`AUTH_MODE=proxy`), and Cloudflare
+adapters.
