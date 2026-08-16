@@ -24,25 +24,26 @@ is **built, adversarially reviewed, and field-tested three ways**:
 The EC2 instance was **terminated after the test** (billing hygiene). Nothing of value was
 on it — the repo is the source of truth; production state was throwaway demo data.
 
-## The next task (before pitching): distributable Docker image
+## Done 2026-08-16: distributable Docker image (release v0.1.0 published)
 
-The one missing piece of the adoption story. Build a GitHub Actions release workflow
-(spec §15) triggered on `v*` tags:
+`.github/workflows/release.yml` runs on `v*` tags: a version-drift check (tag vs
+`server/package.json` vs `cli/Cargo.toml` — bump both before tagging), the ghcr image
+(amd64 + arm64, built from the repo Dockerfile untouched — the package.json/drizzle/dist
+layout invariant lives there, not in CI), CLI tarballs (macOS arm64 + x86_64,
+Linux x86_64 musl static), and a GitHub release carrying the tarballs. Run #1 on
+`v0.1.0` went green in ~5 min. `docker-compose.yml` now prefers
+`image: ghcr.io/adarsh-roy/artef:0.1.0` (`build: .` stays as the commented source path).
+Plan: `docs/superpowers/plans/2026-08-16-ghcr-release-workflow.md`.
 
-- Build + push the server image to `ghcr.io/adarsh-roy/artef:<tag>` (and `:latest`).
-  Multi-arch (amd64 + arm64) if cheap. Make the package public so ops can pull anonymously.
-- Build the CLI (`cargo build --release`) for macOS arm64 + x86_64 and Linux x86_64;
-  attach binaries to the GitHub release.
-- Then change `docker-compose.yml`'s app service to prefer `image: ghcr.io/adarsh-roy/artef:<tag>`
-  (keep `build: .` as a commented alternative for source deploys).
-- **Constraints from earlier reviews (in the SDD ledger):** the image must keep
-  `server/package.json` adjacent to `drizzle/` and `dist/` (migrations resolve by walking up
-  to the nearest package.json); never create a `dist/package.json`; entrypoint is
-  `dist/src/index.js`. The current Dockerfile does all this correctly — the CI job should
-  reuse it, not reinvent it.
-- After the image is published: refresh `docs/pitch/deploying-artef.html` (the "Where the
-  Docker image comes from" table's first row becomes the ghcr row; bump the footer), redeploy,
-  and republish it.
+Still manual after each FIRST publish: the ghcr package starts Private and GitHub has
+no API for container visibility — flip it at
+github.com/users/Adarsh-Roy/packages/container/artef/settings → Danger zone → Change
+visibility → Public, then verify `docker pull ghcr.io/adarsh-roy/artef:0.1.0` works
+with no login. The pitch doc's image table + footer are refreshed in the repo; serving
+the updated page again means redoing the EC2 deployment below (it can now skip the
+source rsync/swapfile and just pull the image). Note for agents: `gh` on this machine
+cannot see this private repo (its active account has no access) — check CI via the
+browser instead.
 
 ## How to redo the EC2 deployment (agent-executable)
 
