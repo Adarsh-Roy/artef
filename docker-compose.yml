@@ -23,7 +23,10 @@ services:
       - app
 
   app:
-    build: .
+    # Published release image (built by .github/workflows/release.yml from the
+    # repo Dockerfile). For a source deploy, comment `image:` and uncomment:
+    # build: .
+    image: ghcr.io/adarsh-roy/artef:0.1.0
     restart: unless-stopped
     env_file: .env
     environment:
