@@ -46,14 +46,32 @@ No second domain, no wildcard certificate, no sidecars. Serve artef at the
 **root** of its domain (`https://artef.company.com/`, not `https://host/artef`):
 asset URLs and short links are root-relative.
 
-## Use it
+## Connect an agent (MCP)
 
-Install the CLI from a release — with `curl`, not the browser (browser
-downloads trip macOS Gatekeeper on unsigned binaries) — or build from source
-with `cargo build --release` in `cli/`:
+Nothing to install. The MCP server lives at `/mcp` on the deployment itself,
+with OAuth sign-in built in:
 
 ```bash
-V=v0.1.0
+claude mcp add --transport http artef https://artef.company.com/mcp
+```
+
+On first use the agent reports that the server needs authentication; approving
+opens the browser, you confirm on a page that reuses your normal SSO session,
+and the harness holds and refreshes its own token from then on. The tools —
+`publish_artifact`, `update_artifact`, `get_artifact`, `get_content`,
+`list_artifacts`, `set_visibility`, `grant_access` — validate documents
+server-side and return violations as data the agent can fix and retry. Revoke
+the connection any time by deleting the `mcp: …` token from your token list.
+
+## Install the CLI (optional)
+
+For `artef watch` (re-push a regenerated file on an interval), CI pipelines,
+and pushing by hand. Download with `curl`, not the browser (browser downloads
+trip macOS Gatekeeper on unsigned binaries), or build from source with
+`cargo build --release` in `cli/`:
+
+```bash
+V=v0.2.0
 T=aarch64-apple-darwin   # or: x86_64-apple-darwin, x86_64-unknown-linux-musl
 curl -fsSL "https://github.com/Adarsh-Roy/artef/releases/download/$V/artef-$V-$T.tar.gz" | tar xz
 sudo mv artef /usr/local/bin/   # or anywhere on your PATH
@@ -69,19 +87,10 @@ artef share --email teammate@company.com report.html
 
 `artef lint report.html` checks a file against the sandbox rules before you
 push; `push` runs the same check on its own. See `artef --help` for `ls`,
-`open`, `pull`, `rm`, and `watch`.
-
-On its first run the CLI also registers the **agent skill**
-([`skill/SKILL.md`](./skill/SKILL.md)) for Claude Code and Codex, so your agent
-knows the everything-inline rules before it writes a document.
-
-**MCP** — the same operations as typed tools; after `artef login`, connect an
-agent without the binary in the loop:
-
-```bash
-claude mcp add --transport http artef https://artef.company.com/mcp \
-  --header "Authorization: Bearer $(sed -n 's/^token = "\(.*\)"/\1/p' ~/.config/artef/config.toml)"
-```
+`open`, `pull`, `rm`, and `watch`. On its first run the CLI also registers the
+**agent skill** ([`skill/SKILL.md`](./skill/SKILL.md)) for Claude Code and
+Codex, so an agent generating documents locally knows the everything-inline
+rules.
 
 ## Development
 
@@ -97,7 +106,7 @@ The server is TypeScript (Hono, Drizzle, Postgres); the CLI is Rust.
 
 Shipped: push/serve on one origin, the sandbox and its invariant test, the CLI,
 visibility and sharing, live documents (`watch` + SSE), content-addressed asset
-extraction, the MCP server, and the tagged-release pipeline (image + CLI
-binaries). Still ahead: an S3 blob backend, version-history browsing,
-reverse-proxy (`AUTH_MODE=proxy`) authentication, MCP OAuth sign-in, and
-optional Cloudflare adapters.
+extraction, the MCP server with OAuth sign-in, and the tagged-release pipeline
+(image + CLI binaries). Still ahead: an S3 blob backend, version-history
+browsing, reverse-proxy (`AUTH_MODE=proxy`) authentication, and optional
+Cloudflare adapters.

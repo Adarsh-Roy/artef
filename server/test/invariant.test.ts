@@ -318,6 +318,21 @@ describe('the whole route table', () => {
     'POST /cli/auth/approve',
     'POST /cli/auth/exchange',
     'PUT /api/artifacts/:id/content',
+    // OAuth for the MCP door (§7.0): discovery metadata (JSON), dynamic client
+    // registration (JSON), the consent pages (server-rendered, same family as
+    // /cli/auth), and the token exchange (JSON). No user bytes anywhere — the
+    // consent page renders the client's registered name through esc(), never
+    // document content — so none of these belong in the byte-route list.
+    'GET /.well-known/oauth-protected-resource/mcp',
+    'GET /.well-known/oauth-protected-resource',
+    'GET /.well-known/oauth-authorization-server',
+    'POST /oauth/register',
+    'GET /oauth/authorize',
+    // Two entries like /cli/auth/approve's two: the origin-check middleware
+    // (ALL) and the handler (POST) sit on the same path.
+    'ALL /oauth/authorize/approve',
+    'POST /oauth/authorize/approve',
+    'POST /oauth/token',
   ]
 
   it('is exactly the table this file has classified', () => {

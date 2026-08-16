@@ -97,6 +97,37 @@ export function cliAuthPageHeaders(): Record<string, string> {
   }
 }
 
+/**
+ * The OAuth consent pages (routes/oauth.ts). Same shape as CLI_AUTH_CSP with
+ * one difference in `form-action`: approving 302s to the client's registered
+ * redirect_uri, and Chromium enforces `form-action` on a form submission's
+ * *redirect target* (the field lesson in docs/HANDOFF.md). Registered
+ * redirect URIs are https or loopback http, so those — and only those — are
+ * what the policy admits.
+ */
+export const OAUTH_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https: http://localhost:* http://127.0.0.1:*; base-uri 'none'; frame-ancestors 'none'"
+
+/** Same reasoning as cliAuthPageHeaders, swapping in the OAuth form-action. */
+export function oauthPageHeaders(): Record<string, string> {
+  return {
+    'Content-Security-Policy': OAUTH_CSP,
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'same-origin',
+    'Cache-Control': 'private, no-store',
+  }
+}
+
+/**
+ * The `WWW-Authenticate` value for a 401 from `/mcp` — the breadcrumb an MCP
+ * harness follows to discover the OAuth endpoints (RFC 9728 §5.1). Only /mcp
+ * carries it: the REST API's 401 shape predates this and stays untouched.
+ */
+export function mcpAuthChallenge(url: string): string {
+  const base = url.replace(/\/$/, '')
+  return `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`
+}
+
 /** `/c/:id` — the artifact itself, framed by the shell page. */
 export function artifactPageHeaders(): Record<string, string> {
   return {

@@ -20,6 +20,7 @@ import { registerContentRoutes } from './routes/content.js'
 import { registerEventRoutes } from './routes/events.js'
 import { registerGrantRoutes } from './routes/grants.js'
 import { registerMcpRoutes } from './routes/mcp.js'
+import { registerOauthRoutes } from './routes/oauth.js'
 import { registerTokenRoutes } from './routes/tokens.js'
 import { registerUserRoutes } from './routes/users.js'
 import { registerViewerRoutes } from './viewer/routes.js'
@@ -93,6 +94,10 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   // The other way to get a machine token (§7.2): a browser flow instead of an
   // API call, because the CLI has no credential yet and is the thing asking.
   registerCliAuthRoutes(app, deps)
+  // And the third way (§7.0): the same browser approval wrapped in OAuth, for
+  // MCP harnesses that manage their own credential. Same family as the CLI
+  // flow above — codes, not tokens, cross the browser.
+  registerOauthRoutes(app, deps)
   // After the artifact routes, which is what puts the content endpoints behind
   // the `/api/artifacts/:id/*` token-scope middleware registered there — hono
   // runs middleware in registration order, so a route registered first would

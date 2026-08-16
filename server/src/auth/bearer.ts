@@ -3,10 +3,11 @@
 // sha256 of the token is stored, so the lookup is by hash and the database does
 // the comparison — the plaintext exists on the wire and nowhere else.
 import { eq } from 'drizzle-orm'
-import type { MiddlewareHandler } from 'hono'
+import type { Context, MiddlewareHandler } from 'hono'
 import type { AppEnv, Deps } from '../app.js'
 import { machineTokens, users } from '../db/schema.js'
 import { hashToken } from '../lib/crypto.js'
+import { mcpAuthChallenge } from '../lib/headers.js'
 
 /** How stale `last_used_at` may get before a request pays for a write. */
 const LAST_USED_REFRESH_MS = 60_000
@@ -32,10 +33,10 @@ export function bearerMiddleware(deps: Deps): MiddlewareHandler<AppEnv> {
 
     // Unknown, revoked and expired are one answer on the wire: whoever holds a
     // dead token learns nothing from us about why it is dead.
-    if (found === undefined) return c.json({ error: 'invalid token' }, 401)
+    if (found === undefined) return invalidToken(c, deps)
     const { token, user } = found
     if (token.expiresAt !== null && token.expiresAt.getTime() <= Date.now()) {
-      return c.json({ error: 'invalid token' }, 401)
+      return invalidToken(c, deps)
     }
 
     c.set('user', user)
@@ -50,6 +51,17 @@ export function bearerMiddleware(deps: Deps): MiddlewareHandler<AppEnv> {
     await touchLastUsed(deps, token)
     return next()
   }
+}
+
+/**
+ * The one 401 this middleware sends. On `/mcp` — and only there — it carries
+ * the `WWW-Authenticate` breadcrumb an MCP harness follows into the OAuth flow
+ * (spec §7.0); an expired access token is precisely what sends a harness off
+ * to refresh. The REST API's 401 shape predates OAuth and stays as it was.
+ */
+function invalidToken(c: Context<AppEnv>, deps: Deps) {
+  if (c.req.path === '/mcp') c.header('WWW-Authenticate', mcpAuthChallenge(deps.cfg.url))
+  return c.json({ error: 'invalid token' }, 401)
 }
 
 /** The credential from an `Authorization: Bearer …` header, or null if the

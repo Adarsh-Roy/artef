@@ -90,6 +90,53 @@ export const cliAuthCodes = pgTable('cli_auth_codes', {
   createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
 })
 
+/**
+ * Public OAuth clients, from dynamic registration (RFC 7591) — how an MCP
+ * harness introduces itself before the browser flow (spec §7.0). No secret is
+ * stored because none exists: these are public clients, and PKCE is what binds
+ * an authorization code to the client instance that started the flow.
+ */
+export const oauthClients = pgTable('oauth_clients', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  name: text('name'),
+  redirectUris: text('redirect_uris').array().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
+})
+
+/**
+ * One-time OAuth authorization codes, hashed like `cli_auth_codes` above.
+ * Unlike those, no token is pre-minted here: PKCE has to pass first, so the
+ * machine token is created at the exchange, inside the same transaction that
+ * spends the code.
+ */
+export const oauthCodes = pgTable('oauth_codes', {
+  codeHash: bytea('code_hash').primaryKey(),
+  clientId: uuid('client_id').notNull().references(() => oauthClients.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  redirectUri: text('redirect_uri').notNull(),
+  codeChallenge: text('code_challenge').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true, precision: 3 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
+})
+
+/**
+ * Rotating OAuth refresh tokens. `access_token_id` cascades from the machine
+ * token it accompanies, so revoking the visible token in the token list fully
+ * disconnects the client — its next refresh finds no row and has to re-run the
+ * browser flow. Only the hash is stored, like every other credential here.
+ */
+export const oauthRefreshTokens = pgTable('oauth_refresh_tokens', {
+  tokenHash: bytea('token_hash').primaryKey(),
+  clientId: uuid('client_id').notNull().references(() => oauthClients.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  accessTokenId: uuid('access_token_id').notNull().references(() => machineTokens.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true, precision: 3 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().defaultNow(),
+})
+
 export const machineTokens = pgTable('machine_tokens', {
   id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),

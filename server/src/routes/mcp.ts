@@ -29,6 +29,7 @@ import { z } from 'zod'
 import type { AppEnv, Deps } from '../app.js'
 import { sha256Hex } from '../lib/crypto.js'
 import { gzipBuf } from '../lib/gzip.js'
+import { mcpAuthChallenge } from '../lib/headers.js'
 import { preflight, type Violation } from '../lib/preflight.js'
 
 /** What the agent sees in the handshake. Kept in step with the package version
@@ -64,6 +65,10 @@ export function registerMcpRoutes(app: Hono<AppEnv>, deps: Deps): void {
     // an HTTP 401 rather than a protocol-level surprise.
     const authorization = c.req.header('Authorization')
     if (c.get('authKind') !== 'bearer' || authorization === undefined) {
+      // The WWW-Authenticate breadcrumb is what turns this refusal into an
+      // onboarding: an MCP harness follows it to the OAuth metadata and comes
+      // back with a token of its own (spec §7.0).
+      c.header('WWW-Authenticate', mcpAuthChallenge(deps.cfg.url))
       return c.json({ error: 'unauthorized' }, 401)
     }
 

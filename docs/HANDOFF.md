@@ -73,6 +73,18 @@ honors first; a `HOME=` prefix did not isolate it in this test and the login wro
 real `~/.config/artef/config.toml` (harmless here: the entry it replaced pointed at the
 previous, terminated deployment).
 
+## Done 2026-08-16 (evening): MCP OAuth (v0.2.0)
+
+`/mcp` now onboards harnesses itself: 401 carries `WWW-Authenticate` →
+`/.well-known/oauth-protected-resource/mcp` → RFC 8414 metadata → dynamic client
+registration → consent page on the existing SSO session → PKCE code exchange. Access
+tokens are ordinary machine tokens (`mcp: <client>`, 7-day expiry); refresh tokens
+rotate and cascade-die with the visible token, so revoking in the token list fully
+disconnects a client. `claude mcp add --transport http artef <url>/mcp` needs no
+header and no CLI. Routes in `server/src/routes/oauth.ts` (mirrors cliauth.ts
+mechanics), 36 tests in `server/test/oauth.test.ts`, spec §7.0 rewritten, invariant
+snapshot updated. Versions bumped to 0.2.0 (both manifests + compose pin).
+
 ## How to redo the EC2 deployment (agent-executable)
 
 All personal-account work. **Never use the `aws-prod`/`aws-stage` CLI profiles on this
