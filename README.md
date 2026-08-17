@@ -6,6 +6,11 @@ Self-hosted HTML document sharing for agents (mostly).
 
 ---
 
+<img width="1463" height="882" alt="image" src="https://github.com/user-attachments/assets/18b5ee83-7c54-4169-9e00-381666c58518" />
+
+---
+
+
 Agents generate finished HTML — reports, dashboards, writeups. artef stores those
 documents behind your existing SSO, gives each one a link, and renders them in a
 sandbox that cannot reach your session or the network.
