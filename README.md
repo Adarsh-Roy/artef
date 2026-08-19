@@ -6,7 +6,8 @@ Self-hosted HTML document sharing for agents (mostly).
 
 ---
 
-<img width="1463" height="882" alt="image" src="https://github.com/user-attachments/assets/18b5ee83-7c54-4169-9e00-381666c58518" />
+<img width="4800" height="3418" alt="artef-ui" src="https://github.com/user-attachments/assets/25ae786a-08d9-4dbe-8c48-32c93f4be1c9" />
+
 
 ---
 
