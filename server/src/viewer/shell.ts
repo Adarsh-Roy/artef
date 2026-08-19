@@ -71,6 +71,12 @@ export function renderShell(o: ShellOpts): string {
     .filter(part => part !== null)
     .join(' · ')
 
+  // Signed-in only, and deliberately: a stranger reading a public document has
+  // no homepage behind that link, so offering it would send them to a login
+  // wall they never asked for.
+  const home = o.signedIn
+    ? `<a class="icon-btn home" href="/" aria-label="Home">${HOME_ICON}</a>`
+    : ''
   const share = o.canShare
     ? '<button id="share-button" class="btn" type="button">Share</button>'
     : ''
@@ -93,7 +99,7 @@ export function renderShell(o: ShellOpts): string {
 ${ogTags(title, o.siteUrl, o.id)}
 <style>${STYLE}</style>
 </head><body>
-<header class="bar">
+<header class="bar">${home}
 <div class="who"><h1>${esc(title)}</h1><p class="meta">${subtitle}</p></div>
 <div class="actions">${del}${share}${account}</div>
 </header>
@@ -128,6 +134,12 @@ ${ogTags(title, o.siteUrl, o.id)}
 }
 
 // ---------------------------------------------------------------------------
+
+/** A wireframe house: stroke-only, so it inherits `currentColor` and recolors
+ *  with the theme for free. `aria-hidden` because the link around it carries
+ *  the label. */
+const HOME_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V9.5"/><path d="M10 21v-6h4v6"/></svg>'
 
 /** OpenGraph and Twitter tags (§5.8). No `og:image`: rasterizing a card is a
  *  WASM binary and a font subset for a prettier unfurl, deliberately deferred. */

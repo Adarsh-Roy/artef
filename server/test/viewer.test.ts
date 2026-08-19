@@ -675,6 +675,25 @@ describe('the delete button (design 2026-08-19)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The home link in the bar (design 2026-08-19)
+// ---------------------------------------------------------------------------
+
+describe('the home link (design 2026-08-19)', () => {
+  it('is in the bar for a signed-in reader and absent for a stranger', async () => {
+    const { art, cookie } = await published({ visibility: 'public' })
+
+    const signedIn = await (await shell(art.id, { Cookie: cookie })).text()
+    expect(signedIn).toContain('class="icon-btn home"')
+    expect(signedIn).toContain('href="/"')
+
+    // A stranger reading a public document has no homepage to go to — the link
+    // would only lead them to a login wall they never asked for.
+    const anonymous = await (await shell(art.id)).text()
+    expect(anonymous).not.toContain('class="icon-btn home"')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // GET /c/:id — the document itself
 // ---------------------------------------------------------------------------
 
