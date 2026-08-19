@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { artifactGrants, artifacts } from '../src/db/schema.js'
 import { sha256 } from '../src/lib/crypto.js'
 import { gzipBuf } from '../src/lib/gzip.js'
-import { closeDb, makeUser, resetDb, testDeps, type TestDeps } from './helpers.js'
+import { closeDb, makeMachineToken, makeUser, resetDb, testDeps, type TestDeps } from './helpers.js'
 
 let deps: TestDeps
 
@@ -39,6 +39,18 @@ async function makeArtifact(opts: {
 describe('GET / signed out', () => {
   it('redirects to login with next=/', async () => {
     const res = await deps.app.request('/')
+    expect(res.status).toBe(302)
+    expect(res.headers.get('Location')).toBe('/auth/login?next=%2F')
+  })
+
+  it('sends a machine token to login too, rather than rendering the page', async () => {
+    const me = await makeUser(deps)
+    await makeArtifact({ workspaceId: me.user.workspaceId, ownerId: me.user.id, name: 'mine' })
+    const token = await makeMachineToken(deps, me.user.id)
+
+    // The bearer middleware is scoped to /api and /mcp, so this page is session
+    // auth only — an agent's token must never enumerate a workspace from here.
+    const res = await deps.app.request('/', { headers: token.header })
     expect(res.status).toBe(302)
     expect(res.headers.get('Location')).toBe('/auth/login?next=%2F')
   })
@@ -78,6 +90,42 @@ describe('GET / signed in', () => {
     expect(workspace).toContain(`/a/${open.id}`)
   })
 
+  it('lists a workspace-visible document you were granted once, under Shared', async () => {
+    const me = await makeUser(deps)
+    const colleague = await makeUser(deps)
+    // Visible to the whole workspace *and* granted to me by name. Both bucket
+    // queries could claim it; only the shared one may, or the page shows the
+    // same document twice.
+    const both = await makeArtifact({
+      workspaceId: me.user.workspaceId, ownerId: colleague.user.id,
+      name: 'both ways', visibility: 'workspace',
+    })
+    await deps.db.insert(artifactGrants).values({
+      artifactId: both.id, userId: me.user.id, role: 'viewer', grantedBy: colleague.user.id,
+    })
+
+    const html = await (await deps.app.request('/', { headers: { Cookie: me.cookie } })).text()
+    expect(html.split(both.id).length - 1).toBe(1)
+    const sharedSection = html.slice(html.indexOf('Shared with you'), html.indexOf('From your workspace'))
+    const workspace = html.slice(html.indexOf('From your workspace'))
+    expect(sharedSection).toContain(`/a/${both.id}`)
+    expect(workspace).not.toContain(both.id)
+  })
+
+  it('sends the shell page headers', async () => {
+    const me = await makeUser(deps)
+    const res = await deps.app.request('/', { headers: { Cookie: me.cookie } })
+    expect(res.status).toBe(200)
+    // The page lists document names somebody else wrote, so it gets the same
+    // floor under an injection every one of our own pages gets.
+    const csp = res.headers.get('Content-Security-Policy')
+    expect(csp).not.toBeNull()
+    expect(csp).toContain("default-src 'none'")
+    // A personal list of documents must not sit in a cache for the next person
+    // on a shared machine.
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store')
+  })
+
   it('never shows another workspace, and never shows ungranted private docs', async () => {
     const me = await makeUser(deps)
     const colleague = await makeUser(deps)
@@ -109,6 +157,21 @@ describe('GET / signed in', () => {
     await makeArtifact({
       workspaceId: me.user.workspaceId, ownerId: me.user.id,
       name: '<img src=x onerror=alert(1)>',
+    })
+    const html = await (await deps.app.request('/', { headers: { Cookie: me.cookie } })).text()
+    expect(html).not.toContain('<img src=x')
+    expect(html).toContain('&lt;img src=x')
+  })
+
+  it('escapes owner names', async () => {
+    const me = await makeUser(deps)
+    // The owner's name is only printed in the workspace bucket, so that is the
+    // one place it can be injected from — a name is whatever the sign-in
+    // provider handed us, not something we wrote.
+    const colleague = await makeUser(deps, { name: '<img src=x onerror=alert(1)>' })
+    await makeArtifact({
+      workspaceId: me.user.workspaceId, ownerId: colleague.user.id,
+      name: 'theirs', visibility: 'workspace',
     })
     const html = await (await deps.app.request('/', { headers: { Cookie: me.cookie } })).text()
     expect(html).not.toContain('<img src=x')

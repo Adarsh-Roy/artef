@@ -671,6 +671,10 @@ function deleteDialog(title: string): string {
  * page that no longer has a document behind it. The button is disabled for the
  * length of the call so a second click cannot fire a second DELETE, and a
  * failure puts it back rather than leaving a dialog nobody can act on.
+ *
+ * Opening resets the dialog, the same way the homepage's does: a previous
+ * attempt's "Could not delete. Try again." would otherwise still be sitting
+ * there when someone cancels and opens it again.
  */
 function deleteScript(o: ShellOpts): string {
   return `
@@ -681,7 +685,7 @@ function deleteScript(o: ShellOpts): string {
   if (!dialog || !openButton) return
   const statusLine = document.getElementById('delete-status')
   const confirm = document.getElementById('delete-confirm')
-  openButton.addEventListener('click', () => { if (!dialog.open) dialog.showModal() })
+  openButton.addEventListener('click', () => { statusLine.hidden = true; confirm.disabled = false; if (!dialog.open) dialog.showModal() })
   document.getElementById('delete-cancel').addEventListener('click', () => dialog.close())
   confirm.addEventListener('click', async () => {
     confirm.disabled = true
