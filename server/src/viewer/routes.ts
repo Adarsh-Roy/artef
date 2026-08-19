@@ -20,14 +20,16 @@ import { mintContentToken, verifyContentToken } from '../lib/crypto.js'
 import { artifactPageHeaders, shellPageHeaders } from '../lib/headers.js'
 import { getArtifactWithGrant, isOwnerOrAdmin, UUID_RE } from '../routes/artifacts.js'
 import { renderLoginPage, renderShell } from './shell.js'
+import { THEME } from './theme.js'
 
 /** One body for every refusal, so "you may not" and "it is not there" are the
  *  same answer down to the byte (spec §2.3). */
 const NOT_FOUND_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Not found</title>
-<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:2rem}
-main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0;color:#333}</style>
+<style>${THEME}
+body{font-size:16px;line-height:1.6;display:grid;place-items:center;min-height:100vh;padding:2rem}
+main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0;color:var(--ink-muted)}</style>
 </head><body><main><h1>Not found</h1>
 <p>This document does not exist, or you do not have access to it.</p></main></body></html>`
 

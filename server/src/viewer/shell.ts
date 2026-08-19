@@ -9,8 +9,10 @@
 // by whoever pushed the document, which in practice means written by a language
 // model, which means it is attacker-controlled.
 
+import { CHROME, THEME } from './theme.js'
+
 /** The title shown for a document nobody named. */
-const FALLBACK_TITLE = 'Artef document'
+export const FALLBACK_TITLE = 'Artef document'
 
 export interface ShellOpts {
   id: string
@@ -70,13 +72,13 @@ export function renderShell(o: ShellOpts): string {
     .join(' · ')
 
   const share = o.canShare
-    ? '<button id="share-button" type="button">Share</button>'
+    ? '<button id="share-button" class="btn" type="button">Share</button>'
     : ''
   // A POST, never a link: logging out is a state change, and a state change
   // must not be something another page can cause with an <img> tag (§2.2).
   const account = o.signedIn
-    ? '<form class="logout" method="post" action="/auth/logout"><button type="submit">Log out</button></form>'
-    : `<a class="signin" href="/auth/login?next=${encodeURIComponent(`/a/${o.id}`)}">Sign in</a>`
+    ? '<form class="logout" method="post" action="/auth/logout"><button class="btn" type="submit">Log out</button></form>'
+    : `<a class="btn btn-primary signin" href="/auth/login?next=${encodeURIComponent(`/a/${o.id}`)}">Sign in</a>`
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -112,7 +114,7 @@ ${ogTags(title, o.siteUrl, o.id)}
 </head><body><main>
 <h1>${esc(title)}</h1>
 <p>Sign in to read this document.</p>
-<p><a href="/auth/login?next=${next}">Sign in</a></p>
+<p><a class="btn btn-primary" href="/auth/login?next=${next}">Sign in</a></p>
 </main></body></html>`
 }
 
@@ -632,45 +634,45 @@ function jsValue(value: unknown): string {
 /** `jsValue` for the common case, where the value is a string. */
 const jsString = (s: string): string => jsValue(s)
 
-const PROSE_STYLE = `body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:2rem}
-main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem;overflow-wrap:anywhere}p{margin:0 0 1rem;color:#333}`
+const PROSE_STYLE = `${THEME}${CHROME}
+body{font-size:16px;line-height:1.6;display:grid;place-items:center;min-height:100vh;padding:2rem}
+main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem;overflow-wrap:anywhere}p{margin:0 0 1rem;color:var(--ink-muted)}`
 
-const STYLE = `*{box-sizing:border-box}
+/**
+ * The shell's own layout, on top of the shared theme. `#artifact-frame` keeps
+ * `background:#fff` on purpose: artifact documents are overwhelmingly light
+ * pages, and a transparent frame over a dark shell flashes dark while loading.
+ */
+const STYLE = `${THEME}${CHROME}
 html,body{height:100%}
-body{margin:0;font:14px/1.5 system-ui,sans-serif;display:flex;flex-direction:column;color:#111}
-.bar{display:flex;align-items:center;gap:1rem;padding:.5rem 1rem;border-bottom:1px solid #e3e3e3;background:#fafafa}
-.who{min-width:0}
-.bar h1{font-size:1rem;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.meta{margin:0;color:#666;font-size:.8125rem}
-.actions{margin-left:auto;display:flex;align-items:center;gap:.5rem}
-.actions button,.actions a{font:inherit;padding:.35rem .75rem;border:1px solid #ccc;border-radius:.375rem;background:#fff;color:#111;text-decoration:none;cursor:pointer}
+body{display:flex;flex-direction:column}
 .logout{margin:0}
-#artifact-frame{flex:1;width:100%;border:0}
-#share-dialog{width:min(28rem,92vw);padding:1.25rem;border:1px solid #ddd;border-radius:.5rem}
-#share-dialog::backdrop{background:rgba(0,0,0,.35)}
+#artifact-frame{flex:1;width:100%;border:0;background:#fff}
+#share-dialog{width:min(28rem,92vw);padding:1.25rem}
 #share-dialog h2{font-size:1rem;margin:0 0 .75rem;overflow-wrap:anywhere}
 #share-dialog label{display:block}
-#share-dialog h3{font-size:.875rem;margin:1rem 0 .5rem}
+#share-dialog h3{font-size:.8125rem;font-weight:600;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin:1rem 0 .5rem}
 #share-dialog .add{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:0}
 #share-dialog .add label{flex-basis:100%}
 #share-dialog .combo{position:relative;flex:1;min-width:10rem}
-#share-email{width:100%;font:inherit;padding:.35rem .5rem;border:1px solid #ccc;border-radius:.375rem}
-#share-suggestions{position:absolute;z-index:1;left:0;right:0;top:calc(100% + .15rem);margin:0;padding:.15rem;list-style:none;background:#fff;border:1px solid #ccc;border-radius:.375rem;box-shadow:0 6px 18px rgba(0,0,0,.14);max-height:13rem;overflow-y:auto}
+#share-email{width:100%;font:inherit;padding:.35rem .5rem;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--ink)}
+#share-suggestions{position:absolute;z-index:1;left:0;right:0;top:calc(100% + .15rem);margin:0;padding:.15rem;list-style:none;background:var(--bg-raised);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);max-height:13rem;overflow-y:auto}
 #share-suggestions[hidden]{display:none}
 #share-suggestions li{padding:.3rem .45rem;border-radius:.25rem;cursor:pointer;overflow-wrap:anywhere}
-#share-suggestions li[aria-selected="true"]{background:#eef2ff}
+#share-suggestions li[aria-selected="true"]{background:var(--bg-hover)}
 #share-suggestions .name{display:block}
-#share-suggestions .email{display:block;color:#666;font-size:.8125rem}
+#share-suggestions .email{display:block;color:var(--ink-muted);font-size:.75rem}
 #share-people{list-style:none;margin:0;padding:0 .25rem 0 0;display:grid;gap:.5rem;max-height:16rem;overflow-y:auto}
 #share-people li{display:flex;align-items:center;gap:.5rem}
 #share-people .who{flex:1;min-width:0}
 #share-people .name,#share-people .email{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#share-people .email{color:#666;font-size:.8125rem}
-#share-dialog .general{margin-top:1rem;padding-top:.75rem;border-top:1px solid #e3e3e3}
+#share-people .email{color:var(--ink-muted);font-size:.75rem}
+#share-dialog .general{margin-top:1rem;padding-top:.75rem;border-top:1px solid var(--line)}
 #share-dialog .general h3{margin-top:0}
 #share-dialog .general-row{display:flex;align-items:center;gap:.5rem}
-#share-general-role{color:#444}
-#share-general-help{margin:.4rem 0 0;color:#666;font-size:.8125rem}
-#share-status{margin:.75rem 0 0;color:#a11}
+#share-general-role{color:var(--ink-muted)}
+#share-general-help{margin:.4rem 0 0;color:var(--ink-muted);font-size:.75rem}
+#share-status{margin:.75rem 0 0;color:var(--danger)}
 #share-dialog .foot{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
-#share-dialog button,#share-dialog select{font:inherit;padding:.3rem .6rem;border:1px solid #ccc;border-radius:.375rem;background:#fff;color:#111;cursor:pointer}`
+#share-dialog button,#share-dialog select{font:inherit;font-size:.8125rem;padding:.3rem .6rem;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-raised);color:var(--ink);cursor:pointer}
+#share-dialog button:hover{background:var(--bg-hover)}`
