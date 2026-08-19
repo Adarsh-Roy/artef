@@ -32,7 +32,7 @@ services:
     #
     # To build from source instead, comment the `image:` line and uncomment:
     # build: .
-    image: ghcr.io/adarsh-roy/artef:${ARTEF_VERSION:-0.2.1}
+    image: ghcr.io/adarsh-roy/artef:${ARTEF_VERSION:-0.3.0}
     restart: unless-stopped
     env_file: .env
     environment:
