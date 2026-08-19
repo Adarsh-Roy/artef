@@ -74,6 +74,13 @@ export function renderShell(o: ShellOpts): string {
   const share = o.canShare
     ? '<button id="share-button" class="btn" type="button">Share</button>'
     : ''
+  // Owner only, deliberately. The API lets an admin delete somebody else's
+  // document, and an admin who means to still can — but a button that throws
+  // away another person's work does not belong one click away in the chrome of
+  // a page they opened to read.
+  const del = o.viewerIsOwner
+    ? '<button id="delete-button" class="btn" type="button">Delete</button>'
+    : ''
   // A POST, never a link: logging out is a state change, and a state change
   // must not be something another page can cause with an <img> tag (§2.2).
   const account = o.signedIn
@@ -88,12 +95,14 @@ ${ogTags(title, o.siteUrl, o.id)}
 </head><body>
 <header class="bar">
 <div class="who"><h1>${esc(title)}</h1><p class="meta">${subtitle}</p></div>
-<div class="actions">${share}${account}</div>
+<div class="actions">${del}${share}${account}</div>
 </header>
 <iframe id="artifact-frame" title="${esc(title)}" sandbox="allow-scripts" src="${esc(src)}"></iframe>
 <div id="share-root">${shareDialog(o, title)}</div>
+${o.viewerIsOwner ? deleteDialog(title) : ''}
 <script>${liveScript(o, isPublic)}</script>
 ${o.canShare ? `<script>${shareScript(o)}</script>` : ''}
+${o.viewerIsOwner ? `<script>${deleteScript(o)}</script>` : ''}
 </body></html>`
 }
 
@@ -622,6 +631,64 @@ function shareScript(o: ShellOpts): string {
 `
 }
 
+// ---------------------------------------------------------------------------
+// Deleting a document
+// ---------------------------------------------------------------------------
+
+/**
+ * The confirmation between the Delete button and the API call. The copy is the
+ * contract: the version history goes with the document, everyone's access goes
+ * with it, and nothing brings either back. `esc()` because the name was written
+ * by whoever pushed the document.
+ */
+function deleteDialog(title: string): string {
+  return `
+<dialog id="delete-dialog" aria-labelledby="delete-title">
+<h2 id="delete-title">Delete "${esc(title)}"?</h2>
+<p>This permanently deletes the document, its version history, and everyone's access. It cannot be undone.</p>
+<p id="delete-status" role="status" hidden></p>
+<div class="foot">
+<button id="delete-cancel" class="btn" type="button" autofocus>Cancel</button>
+<button id="delete-confirm" class="btn btn-danger" type="button">Delete</button>
+</div>
+</dialog>`
+}
+
+/**
+ * One `fetch` against the artifact's own API, same-origin, and then away from a
+ * page that no longer has a document behind it. The button is disabled for the
+ * length of the call so a second click cannot fire a second DELETE, and a
+ * failure puts it back rather than leaving a dialog nobody can act on.
+ */
+function deleteScript(o: ShellOpts): string {
+  return `
+(() => {
+  const api = ${jsString(`/api/artifacts/${o.id}`)}
+  const dialog = document.getElementById('delete-dialog')
+  const openButton = document.getElementById('delete-button')
+  if (!dialog || !openButton) return
+  const statusLine = document.getElementById('delete-status')
+  const confirm = document.getElementById('delete-confirm')
+  openButton.addEventListener('click', () => { if (!dialog.open) dialog.showModal() })
+  document.getElementById('delete-cancel').addEventListener('click', () => dialog.close())
+  confirm.addEventListener('click', async () => {
+    confirm.disabled = true
+    statusLine.hidden = true
+    try {
+      const res = await fetch(api, { method: 'DELETE', credentials: 'same-origin' })
+      if (res.status !== 204) throw new Error()
+      // The document is gone; the only place left to stand is the homepage.
+      location.href = '/'
+    } catch (e) {
+      confirm.disabled = false
+      statusLine.textContent = 'Could not delete. Try again.'
+      statusLine.hidden = false
+    }
+  })
+})()
+`
+}
+
 /**
  * A server value on its way into an inline `<script>`. `JSON.stringify` alone
  * is not enough: the HTML parser ends the script at the first `</script`
@@ -675,4 +742,12 @@ body{display:flex;flex-direction:column}
 #share-status{margin:.75rem 0 0;color:var(--danger)}
 #share-dialog .foot{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
 #share-dialog button,#share-dialog select{font:inherit;font-size:.8125rem;padding:.3rem .6rem;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-raised);color:var(--ink);cursor:pointer}
-#share-dialog button:hover{background:var(--bg-hover)}`
+#share-dialog button:hover{background:var(--bg-hover)}
+#delete-dialog{width:min(24rem,92vw);padding:1.25rem}
+#delete-dialog h2{font-size:1rem;margin:0 0 .5rem;overflow-wrap:anywhere}
+#delete-dialog p{margin:.25rem 0;color:var(--ink-muted)}
+/* Doubled selector on purpose: the status line is a <p> in the dialog, so a
+   bare #delete-status loses to #delete-dialog p above and the failure message
+   would come out muted grey rather than red. */
+#delete-dialog #delete-status{color:var(--danger)}
+#delete-dialog .foot{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}`
