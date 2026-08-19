@@ -77,7 +77,7 @@ binaries are attached. Images are built for `linux/amd64` and `linux/arm64`.
 To run a different version, set it in `.env`:
 
 ```bash
-ARTEF_VERSION=0.2.1   # or `latest` to track the most recent release
+ARTEF_VERSION=0.3.0   # or `latest` to track the most recent release
 ```
 
 To upgrade, change that value and:
@@ -122,7 +122,7 @@ Install from a release. Use `curl` rather than a browser download, which marks
 unsigned binaries as quarantined on macOS:
 
 ```bash
-V=v0.2.1
+V=v0.3.0
 T=aarch64-apple-darwin   # or: x86_64-apple-darwin, x86_64-unknown-linux-musl
 curl -fsSL "https://github.com/Adarsh-Roy/artef/releases/download/$V/artef-$V-$T.tar.gz" | tar xz
 sudo mv artef /usr/local/bin/
