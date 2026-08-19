@@ -335,4 +335,9 @@ h2{font-size:.8125rem;font-weight:600;color:var(--ink-muted);text-transform:uppe
    tabbing to the button still shows it. Hidden with visibility rather than
    display, so the row does not reflow when it appears. */
 .doc-row .delete{visibility:hidden}
-.doc-row:hover .delete,.doc-row:focus-within .delete{visibility:visible}`
+.doc-row:hover .delete,.doc-row:focus-within .delete{visibility:visible}
+/* A touchscreen has no hover to reveal the button with, and tapping the row
+   opens the document instead — so on a device without a pointer the button is
+   simply always there. Last in the sheet on purpose: same specificity as the
+   hidden rule above, so source order is what makes it win. */
+@media (hover:none){.doc-row .delete{visibility:visible}}`

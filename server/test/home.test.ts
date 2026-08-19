@@ -189,6 +189,9 @@ describe('deleting from the homepage', () => {
     // Hidden until the row is hovered or something in it takes focus, so the
     // list stays quiet and the button is still reachable from the keyboard.
     expect(html).toMatch(/\.doc-row:hover \.delete,\.doc-row:focus-within \.delete\{visibility:visible\}/)
+    // A touchscreen has neither a hover nor a focus ring to reveal it with, so
+    // there the button is simply always shown.
+    expect(html).toMatch(/@media \(hover:none\)\{\.doc-row \.delete\{visibility:visible\}\}/)
   })
 })
 
