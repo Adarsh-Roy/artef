@@ -21,6 +21,7 @@ import type { users } from '../db/schema.js'
 import { generateMachineToken, hashToken, sha256 } from '../lib/crypto.js'
 import { cliAuthPageHeaders } from '../lib/headers.js'
 import { esc } from '../viewer/shell.js'
+import { CHROME, THEME } from '../viewer/theme.js'
 
 /** What the token is called in the token list, so a person can tell which of
  *  their credentials came from `artef login`. */
@@ -256,10 +257,10 @@ function page(title: string, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
-<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:2rem}
-main{max-width:32rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1rem;color:#333}
-button{font:inherit;padding:.5rem 1rem}
-code{font:14px/1.5 ui-monospace,monospace;word-break:break-all;display:block;padding:.75rem;background:#f4f4f5;border-radius:.25rem}</style>
+<style>${THEME}${CHROME}
+body{font-size:16px;line-height:1.6;display:grid;place-items:center;min-height:100vh;padding:2rem}
+main{max-width:32rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1rem;color:var(--ink-muted)}
+code{font:14px/1.5 ui-monospace,monospace;word-break:break-all;display:block;padding:.75rem;background:var(--bg-raised);border:1px solid var(--line);border-radius:var(--radius);color:var(--ink)}</style>
 </head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`
 }
 
@@ -292,7 +293,7 @@ function confirmPage(
     HEADING,
     `<p>Signed in as ${esc(user.email)}. Approving creates a machine token named “${TOKEN_NAME}”
 that can read and write documents as you, until you revoke it. ${explanation}</p>
-<form method="post" action="/cli/auth/approve">${hidden}<button type="submit">Authorize</button></form>
+<form method="post" action="/cli/auth/approve">${hidden}<button class="btn btn-primary" type="submit">Authorize</button></form>
 ${escape}`,
   )
 }
