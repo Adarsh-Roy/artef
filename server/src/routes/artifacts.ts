@@ -27,11 +27,11 @@ type User = typeof users.$inferSelect
 
 /** Marks a field that was present but unusable, which `null` cannot: `name` and
  *  `visibility` both have meaningful null/absent cases. */
-const INVALID = Symbol('invalid')
+export const INVALID = Symbol('invalid')
 
 /** Every artifact column except `body` — the one thing that must never be read
  *  by a metadata route. Listing them is what keeps `SELECT *` from creeping in. */
-const metaColumns = {
+export const metaColumns = {
   id: artifacts.id,
   workspaceId: artifacts.workspaceId,
   ownerId: artifacts.ownerId,
@@ -293,7 +293,7 @@ function visibleToUser(deps: Deps, user: User, mineOnly: boolean): SQL | undefin
 
 // --- pagination ----------------------------------------------------------------
 
-interface Cursor {
+export interface Cursor {
   updatedAt: Date
   id: string
 }
@@ -317,11 +317,11 @@ const ISO_MS_RE = /^(?!0000)\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
  * back to microseconds, a row microseconds older than the page boundary would
  * fall outside this filter and never be served.
  */
-function encodeCursor(row: ArtifactMeta): string {
+export function encodeCursor(row: ArtifactMeta): string {
   return Buffer.from(`${row.updatedAt.toISOString()}|${row.id}`).toString('base64url')
 }
 
-function parseCursor(raw: string | undefined): Cursor | null | typeof INVALID {
+export function parseCursor(raw: string | undefined): Cursor | null | typeof INVALID {
   if (raw === undefined || raw === '') return null
 
   const decoded = Buffer.from(raw, 'base64url').toString()
@@ -345,7 +345,7 @@ function parseCursor(raw: string | undefined): Cursor | null | typeof INVALID {
   return { updatedAt, id }
 }
 
-function cursorFilter(cursor: Cursor | null): SQL | undefined {
+export function cursorFilter(cursor: Cursor | null): SQL | undefined {
   if (cursor === null) return undefined
   // A row comparison, so the (updated_at, id) tiebreak in the ORDER BY and the
   // page boundary are the same rule — two separate comparisons would drop rows
