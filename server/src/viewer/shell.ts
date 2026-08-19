@@ -100,8 +100,8 @@ ${ogTags(title, o.siteUrl, o.id)}
 <style>${STYLE}</style>
 </head><body>
 <header class="bar">${home}
-<div class="who"><h1>${esc(title)}</h1><p class="meta">${subtitle}</p></div>
-<div class="actions">${del}${share}${account}</div>
+<div class="who"><h1>${esc(title)}</h1><p class="meta">${subtitle}</p></div>${del}
+<div class="actions">${share}${account}</div>
 </header>
 <iframe id="artifact-frame" title="${esc(title)}" sandbox="allow-scripts" src="${esc(src)}"></iframe>
 <div id="share-root">${shareDialog(o, title)}</div>
