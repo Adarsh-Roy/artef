@@ -85,7 +85,7 @@ export function renderShell(o: ShellOpts): string {
   // away another person's work does not belong one click away in the chrome of
   // a page they opened to read.
   const del = o.viewerIsOwner
-    ? '<button id="delete-button" class="btn" type="button">Delete</button>'
+    ? '<button id="delete-button" class="btn btn-danger" type="button">Delete</button>'
     : ''
   // A POST, never a link: logging out is a state change, and a state change
   // must not be something another page can cause with an <img> tag (§2.2).
