@@ -260,7 +260,9 @@ function page(title: string, body: string): string {
 <style>${THEME}${CHROME}
 body{font-size:16px;line-height:1.6;display:grid;place-items:center;min-height:100vh;padding:2rem}
 main{max-width:32rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1rem;color:var(--ink-muted)}
-code{font:14px/1.5 ui-monospace,monospace;word-break:break-all;display:block;padding:.75rem;background:var(--bg-raised);border:1px solid var(--line);border-radius:var(--radius);color:var(--ink)}</style>
+code{font:14px/1.5 ui-monospace,monospace;word-break:break-all;display:block;padding:.75rem;background:var(--bg-raised);border:1px solid var(--line);border-radius:var(--radius);color:var(--ink)}
+.alt{margin-top:1.75rem;padding-top:1.25rem;border-top:1px solid var(--line)}
+.alt p{font-size:.875rem;margin:0 0 .6rem}</style>
 </head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`
 }
 
@@ -282,17 +284,20 @@ function confirmPage(
   const explanation =
     loopback === null
       ? 'The token will be shown on the next page for you to copy into your terminal.'
-      : `The token will be sent to the command line waiting on port ${esc(String(loopback.port))} of this computer, and never shown in this browser.`
+      : 'The token goes straight to the terminal that is waiting for it and is never shown in this browser.'
 
   const escape =
     loopback === null
       ? ''
-      : `<p><a href="/cli/auth/manual?state=${encodeURIComponent(loopback.state)}">Can’t reach this computer from this browser? Copy the token by hand instead.</a></p>`
+      : `<div class="alt">
+<p>Terminal on another machine, like an SSH session or a container?</p>
+<a class="btn" href="/cli/auth/manual?state=${encodeURIComponent(loopback.state)}">Copy the token by hand</a>
+</div>`
 
   return page(
     HEADING,
-    `<p>Signed in as ${esc(user.email)}. Approving creates a machine token named “${TOKEN_NAME}”
-that can read and write documents as you, until you revoke it. ${explanation}</p>
+    `<p>Signed in as ${esc(user.email)}. Approving lets the artef CLI read and write documents
+as you, until you revoke its token. ${explanation}</p>
 <form method="post" action="/cli/auth/approve">${hidden}<button class="btn btn-primary" type="submit">Authorize</button></form>
 ${escape}`,
   )
