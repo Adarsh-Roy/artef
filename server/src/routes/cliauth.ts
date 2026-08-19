@@ -102,6 +102,22 @@ export function registerCliAuthRoutes(app: Hono<AppEnv>, deps: Deps): void {
 
     const form = await c.req.parseBody()
 
+    // Denying mints nothing. For the loopback flow the refusal still travels to
+    // the waiting terminal — as `error=access_denied`, never a code — so the
+    // CLI stops waiting right away instead of sitting out its timeout. The
+    // manual variant has no listener, so a page is the whole answer.
+    if (field(form, 'decision') === 'deny') {
+      if (field(form, 'manual') === '1') return deniedPage(c)
+      const port = parsePort(field(form, 'port'))
+      if (port === null) return refusedPage(c, BAD_PORT)
+      const state = field(form, 'state')
+      if (state === undefined || !STATE_RE.test(state)) return refusedPage(c, BAD_STATE)
+      const target = new URL(`http://127.0.0.1:${port}/callback`)
+      target.searchParams.set('error', 'access_denied')
+      target.searchParams.set('state', state)
+      return c.redirect(target.href, 302)
+    }
+
     // No code, no callback, no waiting listener: the token is handed straight
     // to the person on the page, and is theirs to paste.
     if (field(form, 'manual') === '1') {
@@ -262,7 +278,8 @@ body{font-size:16px;line-height:1.6;display:grid;place-items:center;min-height:1
 main{max-width:32rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1rem;color:var(--ink-muted)}
 code{font:14px/1.5 ui-monospace,monospace;word-break:break-all;display:block;padding:.75rem;background:var(--bg-raised);border:1px solid var(--line);border-radius:var(--radius);color:var(--ink)}
 .alt{margin-top:1.75rem;padding-top:1.25rem;border-top:1px solid var(--line)}
-.alt p{font-size:.875rem;margin:0 0 .6rem}</style>
+.alt p{font-size:.875rem;margin:0 0 .6rem}
+form{display:flex;gap:.5rem}</style>
 </head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`
 }
 
@@ -290,15 +307,15 @@ function confirmPage(
     loopback === null
       ? ''
       : `<div class="alt">
-<p>Terminal on another machine, like an SSH session or a container?</p>
-<a class="btn" href="/cli/auth/manual?state=${encodeURIComponent(loopback.state)}">Copy the token by hand</a>
+<p>Not this machine?</p>
+<a class="btn" href="/cli/auth/manual?state=${encodeURIComponent(loopback.state)}">Copy the token</a>
 </div>`
 
   return page(
     HEADING,
     `<p>Signed in as ${esc(user.email)}. Approving lets the artef CLI read and write documents
 as you, until you revoke its token. ${explanation}</p>
-<form method="post" action="/cli/auth/approve">${hidden}<button class="btn btn-primary" type="submit">Authorize</button></form>
+<form method="post" action="/cli/auth/approve">${hidden}<button class="btn btn-primary" type="submit">Authorize</button><button class="btn" type="submit" name="decision" value="deny">Deny</button></form>
 ${escape}`,
   )
 }
@@ -309,6 +326,12 @@ function tokenPage(token: string): string {
     `<p>Paste this into the terminal that is waiting for it. It is shown here once and
 cannot be shown again — if you lose it, revoke it and run <code>artef login</code> again.</p>
 <code>${esc(token)}</code>`,
+  )
+}
+
+function deniedPage(c: Context<AppEnv>) {
+  return c.html(
+    page('Denied', '<p>No token was created. You can close this tab.</p>'),
   )
 }
 

@@ -51,6 +51,8 @@ pub struct Options<'a> {
 enum Callback {
     /// The callback this terminal was waiting for, carrying the one-time code.
     Code(String),
+    /// Our callback, saying the person pressed Deny in the browser.
+    Denied,
     /// A callback for some other terminal's login.
     WrongState,
     /// Our callback, but with no code in it.
@@ -209,6 +211,13 @@ fn listen(listener: &Server, state: &str, wait: Duration) -> Result<String> {
                 let _ = request.respond(page(200, "Logged in — you can close this tab."));
                 return Ok(code);
             }
+            Callback::Denied => {
+                let _ = request.respond(page(
+                    200,
+                    "Sign-in was denied — nothing was saved. You can close this tab.",
+                ));
+                bail!("the sign-in was denied in the browser");
+            }
             Callback::WrongState => {
                 let _ = request.respond(page(
                     400,
@@ -238,16 +247,24 @@ fn read_callback(raw_url: &str, state: &str) -> Callback {
 
     let mut code = None;
     let mut carried_state = None;
+    let mut denied = false;
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
             "code" => code = Some(value.into_owned()),
             "state" => carried_state = Some(value.into_owned()),
+            // The server sends `error=access_denied` when the person presses
+            // Deny; any error on our own state means "no login", so the exact
+            // value is not load-bearing.
+            "error" => denied = true,
             _ => {}
         }
     }
 
     if carried_state.as_deref() != Some(state) {
         return Callback::WrongState;
+    }
+    if denied {
+        return Callback::Denied;
     }
     match code {
         Some(code) if !code.is_empty() => Callback::Code(code),
@@ -446,6 +463,32 @@ mod tests {
             "error was {err:#}"
         );
         assert!(!path.exists(), "a failed exchange wrote a config file");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_denial_in_the_browser_ends_the_wait_and_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let server = MockServer::start().await;
+        let flow = start(path.clone(), server.uri(), Duration::from_secs(30)).await;
+        let (port, state) = port_and_state(&flow.url);
+
+        // Deny in the browser arrives as `error=access_denied` on our own state.
+        let (status, body) =
+            get(port, &format!("callback?error=access_denied&state={state}")).await;
+        assert_eq!(status, 200);
+        assert!(body.contains("denied"), "body was {body}");
+
+        let (outcome, _) = flow.task.await.expect("the flow finished");
+        let err = outcome.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("denied in the browser"),
+            "error was {err:#}"
+        );
+        assert!(!path.exists(), "a denied login wrote a config file");
+        // Nothing was ever exchanged.
+        assert!(server.received_requests().await.unwrap().is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
