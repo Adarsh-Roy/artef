@@ -23,6 +23,7 @@ import { registerMcpRoutes } from './routes/mcp.js'
 import { registerOauthRoutes } from './routes/oauth.js'
 import { registerTokenRoutes } from './routes/tokens.js'
 import { registerUserRoutes } from './routes/users.js'
+import { registerHomeRoute } from './viewer/home.js'
 import { registerViewerRoutes } from './viewer/routes.js'
 
 export interface Deps {
@@ -117,6 +118,10 @@ export function createApp(deps: Deps): Hono<AppEnv> {
   // reads in. What does matter is that it comes before the viewer below, whose
   // `GET /:id` would otherwise be asked about `/mcp` first.
   registerMcpRoutes(app, deps)
+  // The homepage. Before the viewer on principle — `GET /` and `GET /:id`
+  // never collide (a param cannot be empty), but the reader shouldn't have to
+  // prove that.
+  registerHomeRoute(app, deps)
   // Last, because `GET /:id` matches any single path segment. It hands anything
   // that is not shaped like an artifact id straight on to the next handler, so
   // registration order is not what keeps /_health working — but a route that

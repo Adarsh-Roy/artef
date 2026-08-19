@@ -11,6 +11,7 @@ import type { Config } from '../config.js'
 import { users, workspaces } from '../db/schema.js'
 import { CONSUMER_DOMAINS } from '../lib/consumer-domains.js'
 import { esc } from '../viewer/shell.js'
+import { CHROME, THEME } from '../viewer/theme.js'
 import { originCheck } from './origin.js'
 import { buildSessionCookie, clearSessionCookie } from './session.js'
 
@@ -324,7 +325,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>, deps: Deps): void {
     c.html(
       page(
         'Log out',
-        '<form method="post" action="/auth/logout"><button type="submit">Log out</button></form>',
+        '<form method="post" action="/auth/logout"><button class="btn" type="submit">Log out</button></form>',
       ),
     ),
   )
@@ -377,8 +378,9 @@ function page(title: string, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
-<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:2rem}
-main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1rem;color:#333}
+<style>${THEME}${CHROME}
+body{font-size:16px;line-height:1.6;display:grid;place-items:center;min-height:100vh;padding:2rem}
+main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1rem;color:var(--ink-muted)}
 a{display:inline-block;margin-right:.75rem}</style>
 </head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`
 }
@@ -409,7 +411,7 @@ function unavailablePage(c: Context<AppEnv>, p: Provider) {
 
 function chooserPage(providers: Provider[], next: string): string {
   const links = providers
-    .map(p => `<a href="/auth/${p.id}?next=${encodeURIComponent(next)}">Sign in with ${esc(p.label)}</a>`)
+    .map(p => `<a class="btn btn-primary" href="/auth/${p.id}?next=${encodeURIComponent(next)}">Sign in with ${esc(p.label)}</a>`)
     .join('')
   return page('Sign in', `<p>${links}</p>`)
 }

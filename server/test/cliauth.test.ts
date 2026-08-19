@@ -159,6 +159,36 @@ describe('POST /cli/auth/approve', () => {
     expect(ttlMs).toBeLessThanOrEqual(60_000)
   })
 
+  it('deny sends the terminal access_denied, never a code, and mints nothing', async () => {
+    const { cookie } = await makeUser(deps)
+
+    const res = await approve(
+      { port: PORT, state: STATE, decision: 'deny' },
+      { Cookie: cookie, Origin: ORIGIN },
+    )
+    expect(res.status).toBe(302)
+
+    const url = new URL(res.headers.get('location')!)
+    expect(url.origin).toBe(`http://127.0.0.1:${PORT}`)
+    expect(url.pathname).toBe('/callback')
+    expect(url.searchParams.get('error')).toBe('access_denied')
+    expect(url.searchParams.get('state')).toBe(STATE)
+    expect(url.searchParams.get('code')).toBeNull()
+
+    expect(await tokens()).toHaveLength(0)
+    expect(await codes()).toHaveLength(0)
+  })
+
+  it('deny on the manual variant shows a page and mints nothing', async () => {
+    const { cookie } = await makeUser(deps)
+
+    const res = await approve({ manual: '1', decision: 'deny' }, { Cookie: cookie, Origin: ORIGIN })
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('No token was created')
+
+    expect(await tokens()).toHaveLength(0)
+  })
+
   it('mints nothing usable until the code is exchanged', async () => {
     const { cookie } = await makeUser(deps)
     await approvedCode(cookie)

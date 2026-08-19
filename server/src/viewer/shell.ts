@@ -9,8 +9,10 @@
 // by whoever pushed the document, which in practice means written by a language
 // model, which means it is attacker-controlled.
 
+import { CHROME, THEME } from './theme.js'
+
 /** The title shown for a document nobody named. */
-const FALLBACK_TITLE = 'Artef document'
+export const FALLBACK_TITLE = 'Artef document'
 
 export interface ShellOpts {
   id: string
@@ -69,14 +71,27 @@ export function renderShell(o: ShellOpts): string {
     .filter(part => part !== null)
     .join(' · ')
 
+  // Signed-in only, and deliberately: a stranger reading a public document has
+  // no homepage behind that link, so offering it would send them to a login
+  // wall they never asked for.
+  const home = o.signedIn
+    ? `<a class="icon-btn home" href="/" aria-label="Home">${HOME_ICON}</a>`
+    : ''
   const share = o.canShare
-    ? '<button id="share-button" type="button">Share</button>'
+    ? '<button id="share-button" class="btn" type="button">Share</button>'
+    : ''
+  // Owner only, deliberately. The API lets an admin delete somebody else's
+  // document, and an admin who means to still can — but a button that throws
+  // away another person's work does not belong one click away in the chrome of
+  // a page they opened to read.
+  const del = o.viewerIsOwner
+    ? '<button id="delete-button" class="btn btn-danger" type="button">Delete</button>'
     : ''
   // A POST, never a link: logging out is a state change, and a state change
   // must not be something another page can cause with an <img> tag (§2.2).
   const account = o.signedIn
-    ? '<form class="logout" method="post" action="/auth/logout"><button type="submit">Log out</button></form>'
-    : `<a class="signin" href="/auth/login?next=${encodeURIComponent(`/a/${o.id}`)}">Sign in</a>`
+    ? '<form class="logout" method="post" action="/auth/logout"><button class="btn" type="submit">Log out</button></form>'
+    : `<a class="btn btn-primary signin" href="/auth/login?next=${encodeURIComponent(`/a/${o.id}`)}">Sign in</a>`
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -84,14 +99,16 @@ export function renderShell(o: ShellOpts): string {
 ${ogTags(title, o.siteUrl, o.id)}
 <style>${STYLE}</style>
 </head><body>
-<header class="bar">
-<div class="who"><h1>${esc(title)}</h1><p class="meta">${subtitle}</p></div>
+<header class="bar">${home}
+<div class="who"><h1>${esc(title)}</h1><p class="meta">${subtitle}</p></div>${del}
 <div class="actions">${share}${account}</div>
 </header>
 <iframe id="artifact-frame" title="${esc(title)}" sandbox="allow-scripts" src="${esc(src)}"></iframe>
 <div id="share-root">${shareDialog(o, title)}</div>
+${o.viewerIsOwner ? deleteDialog(title) : ''}
 <script>${liveScript(o, isPublic)}</script>
 ${o.canShare ? `<script>${shareScript(o)}</script>` : ''}
+${o.viewerIsOwner ? `<script>${deleteScript(o)}</script>` : ''}
 </body></html>`
 }
 
@@ -112,11 +129,17 @@ ${ogTags(title, o.siteUrl, o.id)}
 </head><body><main>
 <h1>${esc(title)}</h1>
 <p>Sign in to read this document.</p>
-<p><a href="/auth/login?next=${next}">Sign in</a></p>
+<p><a class="btn btn-primary" href="/auth/login?next=${next}">Sign in</a></p>
 </main></body></html>`
 }
 
 // ---------------------------------------------------------------------------
+
+/** A wireframe house: stroke-only, so it inherits `currentColor` and recolors
+ *  with the theme for free. `aria-hidden` because the link around it carries
+ *  the label. */
+const HOME_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V9.5"/><path d="M10 21v-6h4v6"/></svg>'
 
 /** OpenGraph and Twitter tags (§5.8). No `og:image`: rasterizing a card is a
  *  WASM binary and a font subset for a prettier unfurl, deliberately deferred. */
@@ -620,6 +643,68 @@ function shareScript(o: ShellOpts): string {
 `
 }
 
+// ---------------------------------------------------------------------------
+// Deleting a document
+// ---------------------------------------------------------------------------
+
+/**
+ * The confirmation between the Delete button and the API call. The copy is the
+ * contract: the version history goes with the document, everyone's access goes
+ * with it, and nothing brings either back. `esc()` because the name was written
+ * by whoever pushed the document.
+ */
+function deleteDialog(title: string): string {
+  return `
+<dialog id="delete-dialog" aria-labelledby="delete-title">
+<h2 id="delete-title">Delete "${esc(title)}"?</h2>
+<p>This permanently deletes the document, its version history, and everyone's access. It cannot be undone.</p>
+<p id="delete-status" role="status" hidden></p>
+<div class="foot">
+<button id="delete-cancel" class="btn" type="button" autofocus>Cancel</button>
+<button id="delete-confirm" class="btn btn-danger" type="button">Delete</button>
+</div>
+</dialog>`
+}
+
+/**
+ * One `fetch` against the artifact's own API, same-origin, and then away from a
+ * page that no longer has a document behind it. The button is disabled for the
+ * length of the call so a second click cannot fire a second DELETE, and a
+ * failure puts it back rather than leaving a dialog nobody can act on.
+ *
+ * Opening resets the dialog, the same way the homepage's does: a previous
+ * attempt's "Could not delete. Try again." would otherwise still be sitting
+ * there when someone cancels and opens it again.
+ */
+function deleteScript(o: ShellOpts): string {
+  return `
+(() => {
+  const api = ${jsString(`/api/artifacts/${o.id}`)}
+  const dialog = document.getElementById('delete-dialog')
+  const openButton = document.getElementById('delete-button')
+  if (!dialog || !openButton) return
+  const statusLine = document.getElementById('delete-status')
+  const confirm = document.getElementById('delete-confirm')
+  openButton.addEventListener('click', () => { statusLine.hidden = true; confirm.disabled = false; if (!dialog.open) dialog.showModal() })
+  document.getElementById('delete-cancel').addEventListener('click', () => dialog.close())
+  confirm.addEventListener('click', async () => {
+    confirm.disabled = true
+    statusLine.hidden = true
+    try {
+      const res = await fetch(api, { method: 'DELETE', credentials: 'same-origin' })
+      if (res.status !== 204) throw new Error()
+      // The document is gone; the only place left to stand is the homepage.
+      location.href = '/'
+    } catch (e) {
+      confirm.disabled = false
+      statusLine.textContent = 'Could not delete. Try again.'
+      statusLine.hidden = false
+    }
+  })
+})()
+`
+}
+
 /**
  * A server value on its way into an inline `<script>`. `JSON.stringify` alone
  * is not enough: the HTML parser ends the script at the first `</script`
@@ -632,45 +717,53 @@ function jsValue(value: unknown): string {
 /** `jsValue` for the common case, where the value is a string. */
 const jsString = (s: string): string => jsValue(s)
 
-const PROSE_STYLE = `body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:2rem}
-main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem;overflow-wrap:anywhere}p{margin:0 0 1rem;color:#333}`
+const PROSE_STYLE = `${THEME}${CHROME}
+body{font-size:16px;line-height:1.6;display:grid;place-items:center;min-height:100vh;padding:2rem}
+main{max-width:28rem}h1{font-size:1.25rem;margin:0 0 .75rem;overflow-wrap:anywhere}p{margin:0 0 1rem;color:var(--ink-muted)}`
 
-const STYLE = `*{box-sizing:border-box}
+/**
+ * The shell's own layout, on top of the shared theme. `#artifact-frame` keeps
+ * `background:#fff` on purpose: artifact documents are overwhelmingly light
+ * pages, and a transparent frame over a dark shell flashes dark while loading.
+ */
+const STYLE = `${THEME}${CHROME}
 html,body{height:100%}
-body{margin:0;font:14px/1.5 system-ui,sans-serif;display:flex;flex-direction:column;color:#111}
-.bar{display:flex;align-items:center;gap:1rem;padding:.5rem 1rem;border-bottom:1px solid #e3e3e3;background:#fafafa}
-.who{min-width:0}
-.bar h1{font-size:1rem;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.meta{margin:0;color:#666;font-size:.8125rem}
-.actions{margin-left:auto;display:flex;align-items:center;gap:.5rem}
-.actions button,.actions a{font:inherit;padding:.35rem .75rem;border:1px solid #ccc;border-radius:.375rem;background:#fff;color:#111;text-decoration:none;cursor:pointer}
+body{display:flex;flex-direction:column}
 .logout{margin:0}
-#artifact-frame{flex:1;width:100%;border:0}
-#share-dialog{width:min(28rem,92vw);padding:1.25rem;border:1px solid #ddd;border-radius:.5rem}
-#share-dialog::backdrop{background:rgba(0,0,0,.35)}
+#artifact-frame{flex:1;width:100%;border:0;background:#fff}
+#share-dialog{width:min(28rem,92vw);padding:1.25rem}
 #share-dialog h2{font-size:1rem;margin:0 0 .75rem;overflow-wrap:anywhere}
 #share-dialog label{display:block}
-#share-dialog h3{font-size:.875rem;margin:1rem 0 .5rem}
+#share-dialog h3{font-size:.8125rem;font-weight:600;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin:1rem 0 .5rem}
 #share-dialog .add{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:0}
 #share-dialog .add label{flex-basis:100%}
 #share-dialog .combo{position:relative;flex:1;min-width:10rem}
-#share-email{width:100%;font:inherit;padding:.35rem .5rem;border:1px solid #ccc;border-radius:.375rem}
-#share-suggestions{position:absolute;z-index:1;left:0;right:0;top:calc(100% + .15rem);margin:0;padding:.15rem;list-style:none;background:#fff;border:1px solid #ccc;border-radius:.375rem;box-shadow:0 6px 18px rgba(0,0,0,.14);max-height:13rem;overflow-y:auto}
+#share-email{width:100%;font:inherit;padding:.35rem .5rem;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);color:var(--ink)}
+#share-suggestions{position:absolute;z-index:1;left:0;right:0;top:calc(100% + .15rem);margin:0;padding:.15rem;list-style:none;background:var(--bg-raised);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);max-height:13rem;overflow-y:auto}
 #share-suggestions[hidden]{display:none}
 #share-suggestions li{padding:.3rem .45rem;border-radius:.25rem;cursor:pointer;overflow-wrap:anywhere}
-#share-suggestions li[aria-selected="true"]{background:#eef2ff}
+#share-suggestions li[aria-selected="true"]{background:var(--bg-hover)}
 #share-suggestions .name{display:block}
-#share-suggestions .email{display:block;color:#666;font-size:.8125rem}
+#share-suggestions .email{display:block;color:var(--ink-muted);font-size:.75rem}
 #share-people{list-style:none;margin:0;padding:0 .25rem 0 0;display:grid;gap:.5rem;max-height:16rem;overflow-y:auto}
 #share-people li{display:flex;align-items:center;gap:.5rem}
 #share-people .who{flex:1;min-width:0}
 #share-people .name,#share-people .email{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#share-people .email{color:#666;font-size:.8125rem}
-#share-dialog .general{margin-top:1rem;padding-top:.75rem;border-top:1px solid #e3e3e3}
+#share-people .email{color:var(--ink-muted);font-size:.75rem}
+#share-dialog .general{margin-top:1rem;padding-top:.75rem;border-top:1px solid var(--line)}
 #share-dialog .general h3{margin-top:0}
 #share-dialog .general-row{display:flex;align-items:center;gap:.5rem}
-#share-general-role{color:#444}
-#share-general-help{margin:.4rem 0 0;color:#666;font-size:.8125rem}
-#share-status{margin:.75rem 0 0;color:#a11}
+#share-general-role{color:var(--ink-muted)}
+#share-general-help{margin:.4rem 0 0;color:var(--ink-muted);font-size:.75rem}
+#share-status{margin:.75rem 0 0;color:var(--danger)}
 #share-dialog .foot{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
-#share-dialog button,#share-dialog select{font:inherit;padding:.3rem .6rem;border:1px solid #ccc;border-radius:.375rem;background:#fff;color:#111;cursor:pointer}`
+#share-dialog button,#share-dialog select{font:inherit;font-size:.8125rem;padding:.3rem .6rem;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-raised);color:var(--ink);cursor:pointer}
+#share-dialog button:hover{background:var(--bg-hover)}
+#delete-dialog{width:min(24rem,92vw);padding:1.25rem}
+#delete-dialog h2{font-size:1rem;margin:0 0 .5rem;overflow-wrap:anywhere}
+#delete-dialog p{margin:.25rem 0;color:var(--ink-muted)}
+/* Doubled selector on purpose: the status line is a <p> in the dialog, so a
+   bare #delete-status loses to #delete-dialog p above and the failure message
+   would come out muted grey rather than red. */
+#delete-dialog #delete-status{color:var(--danger)}
+#delete-dialog .foot{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}`

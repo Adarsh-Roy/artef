@@ -21,6 +21,7 @@ import type { users } from '../db/schema.js'
 import { generateMachineToken, hashToken, sha256, timingSafeEqualBuf } from '../lib/crypto.js'
 import { oauthPageHeaders } from '../lib/headers.js'
 import { esc } from '../viewer/shell.js'
+import { CHROME, THEME } from '../viewer/theme.js'
 
 /** The consent page is up and the redirect is immediate, so as with the CLI
  *  flow, one minute covers the round-trip with room to spare. */
@@ -412,9 +413,10 @@ function page(title: string, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
-<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;padding:2rem}
-main{max-width:32rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1rem;color:#333}
-button{font:inherit;padding:.5rem 1rem}form{display:inline-block;margin-right:.5rem}</style>
+<style>${THEME}${CHROME}
+body{font-size:16px;line-height:1.6;display:grid;place-items:center;min-height:100vh;padding:2rem}
+main{max-width:32rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1rem;color:var(--ink-muted)}
+strong{color:var(--ink)}form{display:inline-block;margin-right:.5rem}</style>
 </head><body><main><h1>${esc(title)}</h1>${body}</main></body></html>`
 }
 
@@ -439,8 +441,8 @@ function consentPage(
     `<p>Signed in as ${esc(user.email)}. Approving lets <strong>${esc(who)}</strong> read and
 write documents as you, until you revoke its token (named “${esc(tokenName(client.name, client.id))}”)
 from your token list. The credential goes to the application, never through this page.</p>
-<form method="post" action="/oauth/authorize/approve">${hidden}<button type="submit" name="decision" value="approve">Authorize</button></form>
-<form method="post" action="/oauth/authorize/approve">${hidden}<button type="submit" name="decision" value="deny">Deny</button></form>`,
+<form method="post" action="/oauth/authorize/approve">${hidden}<button class="btn btn-primary" type="submit" name="decision" value="approve">Authorize</button></form>
+<form method="post" action="/oauth/authorize/approve">${hidden}<button class="btn" type="submit" name="decision" value="deny">Deny</button></form>`,
   )
 }
 

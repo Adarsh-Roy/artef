@@ -271,6 +271,10 @@ describe('the whole route table', () => {
     'DELETE /api/artifacts/:id',
     'DELETE /api/artifacts/:id/grants/:user_id',
     'DELETE /api/tokens/:id',
+    // The homepage (design 2026-08-19). Session-authed, server-rendered list
+    // of document names — every name passes through esc(), no user bytes are
+    // served, so it does not belong in the byte-route list.
+    'GET /',
     'GET /:id',
     'GET /_health',
     'GET /a/:id',

@@ -587,6 +587,113 @@ describe('the share dialog', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The delete button and its confirmation (design 2026-08-19)
+// ---------------------------------------------------------------------------
+
+/** The delete dialog on its own, so an assertion about it cannot be satisfied
+ *  by the share dialog sitting next to it on the same page. */
+function deleteDialog(body: string): string {
+  const found = /<dialog id="delete-dialog"[\s\S]*?<\/dialog>/.exec(body)
+  expect(found, 'no delete dialog in the page').not.toBeNull()
+  return found![0]
+}
+
+describe('the delete button (design 2026-08-19)', () => {
+  it('renders button and dialog for the owner', async () => {
+    const { art, cookie } = await published({ name: 'mine' })
+
+    const html = await (await shell(art.id, { Cookie: cookie })).text()
+    expect(html).toContain('id="delete-button"')
+    expect(html).toContain('id="delete-dialog"')
+    // The copy promises permanence — that is the whole point of the dialog.
+    expect(html).toContain('cannot be undone')
+
+    const dialog = deleteDialog(html)
+    const text = visibleText(dialog)
+    expect(text).toContain('mine')
+    // What goes with the document has to be said, not implied: nobody keeps an
+    // older version and nobody keeps their access.
+    expect(text).toContain('version history')
+    expect(text).toContain('access')
+    expect(dialog).toContain('id="delete-confirm"')
+    expect(dialog).toContain('id="delete-cancel"')
+    expect(dialog).toContain('id="delete-status"')
+  })
+
+  it('wires the confirm button to DELETE on the artifact, then to the homepage', async () => {
+    const { art, cookie } = await published()
+
+    const html = await (await shell(art.id, { Cookie: cookie })).text()
+    expect(html).toContain(`/api/artifacts/${art.id}`)
+    expect(html).toContain("method: 'DELETE'")
+    expect(html).toContain("credentials: 'same-origin'")
+    // 204 is the only success the API gives, and the page it was on no longer
+    // exists — the only place left to stand is the homepage.
+    expect(html).toContain('res.status !== 204')
+    expect(html).toContain("location.href = '/'")
+    // A second click while the first is in flight must not fire a second DELETE.
+    expect(html).toContain('confirm.disabled = true')
+    // …and a failure says so, in the dialog, rather than silently doing nothing.
+    expect(html).toContain('Could not delete. Try again.')
+    // The message is a <p> inside the dialog, so its rule has to outrank the
+    // muted-paragraph rule above it or the failure renders grey.
+    expect(html).toMatch(/#delete-dialog #delete-status\{[^}]*color:var\(--danger\)/)
+  })
+
+  it('renders neither for an admin, an editor, or a stranger to the doc', async () => {
+    const { art } = await published({ visibility: 'workspace' })
+    const admin = await makeUser(deps, { isAdmin: true })
+    const editor = await makeUser(deps)
+    await grantTo(art.id, editor.user.id, 'editor')
+    const peer = await makeUser(deps)
+
+    // The API still lets an admin delete; the UI deliberately does not offer it.
+    for (const { cookie } of [admin, editor, peer]) {
+      const html = await (await shell(art.id, { Cookie: cookie })).text()
+      expect(html).not.toContain('id="delete-button"')
+      expect(html).not.toContain('id="delete-dialog"')
+      // And no script for a dialog that is not there.
+      expect(html).not.toContain("method: 'DELETE'")
+    }
+
+    // Nor for an anonymous reader of a public document.
+    const open = await published({ visibility: 'public' })
+    const anonymous = await (await shell(open.art.id)).text()
+    expect(anonymous).not.toContain('id="delete-button"')
+    expect(anonymous).not.toContain('id="delete-dialog"')
+  })
+
+  it('escapes an XSS artifact name in the confirmation heading', async () => {
+    const { art, cookie } = await published({ name: XSS_NAME })
+
+    const html = await (await shell(art.id, { Cookie: cookie })).text()
+    const dialog = deleteDialog(html)
+    expect(dialog).toContain(esc(XSS_NAME))
+    expect(dialog).not.toContain(XSS_NAME)
+    expect(html).not.toContain('alert(1)</script>')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The home link in the bar (design 2026-08-19)
+// ---------------------------------------------------------------------------
+
+describe('the home link (design 2026-08-19)', () => {
+  it('is in the bar for a signed-in reader and absent for a stranger', async () => {
+    const { art, cookie } = await published({ visibility: 'public' })
+
+    const signedIn = await (await shell(art.id, { Cookie: cookie })).text()
+    expect(signedIn).toContain('class="icon-btn home"')
+    expect(signedIn).toContain('href="/"')
+
+    // A stranger reading a public document has no homepage to go to — the link
+    // would only lead them to a login wall they never asked for.
+    const anonymous = await (await shell(art.id)).text()
+    expect(anonymous).not.toContain('class="icon-btn home"')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // GET /c/:id — the document itself
 // ---------------------------------------------------------------------------
 
